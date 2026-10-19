@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarsMaker Buggy</title>
+  <link rel="icon" href="data:,">
+  <style>
+    html, body { margin: 0; height: 100%; background: #cc9e78; overflow: hidden; }
+    canvas#bevy { width: 100%; height: 100%; display: block; outline: none; }
+    #status { position: absolute; bottom: 10px; left: 14px; font: 14px system-ui, sans-serif; color: #fff8ee; }
+  </style>
+</head>
+<body>
+  <canvas id="bevy" tabindex="0"></canvas>
+  <div id="status">Loading the viewer (wasm)...</div>
+  <script type="module">
+    // Flags come from the URL query, e.g. ?site=PSP_007018_1255_PSP_007229_1255&albedo&realistic
+    import init from './pkg/marsmaker-viewer.js';
+    const status = document.getElementById('status');
+    init().then(() => status.remove()).catch((e) => {
+      // winit uses an exception to hand the event loop to the browser; that one is not an error
+      if (String(e).includes('Using exceptions for control flow')) { status.remove(); return; }
+      status.textContent = 'Viewer failed to start: ' + e;
+      console.error(e);
+    });
+    document.getElementById('bevy').focus();
+  </script>
+</body>
+</html>

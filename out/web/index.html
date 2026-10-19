@@ -1,0 +1,244 @@
+<title>Kaiser Dunes 1:1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700&family=Public+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: instrument console. A full-bleed terrain viewport, a strip of satellite "channels" beneath it,
+   then short field notes. Dark-first: the viewport is the hero and reads best on a night ground. */
+:root {
+  --bg: #15110f;          /* basalt, warm-biased */
+  --panel: #1f1916;
+  --line: #3a2f29;
+  --fg: #efe6df;
+  --muted: #a8968a;
+  --accent: #e0703e;      /* Mars dust orange */
+  --accent-ink: #1b0f08;
+  --sim: #8fa7b8;         /* marks simulated data */
+  --display: "Saira Condensed", "Arial Narrow", sans-serif;
+  --body: "Public Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f5efea; --panel: #ebe2db; --line: #d4c6bb; --fg: #2a1d16; --muted: #75645a;
+  --accent: #b84d1c; --accent-ink: #fff8f3; --sim: #4f6b80; color-scheme: light; } }
+:root[data-theme="light"] {
+  --bg: #f5efea; --panel: #ebe2db; --line: #d4c6bb; --fg: #2a1d16; --muted: #75645a;
+  --accent: #b84d1c; --accent-ink: #fff8f3; --sim: #4f6b80; color-scheme: light; }
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 56px; display: grid; gap: 22px; }
+header { display: grid; gap: 6px; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 700 clamp(34px, 6vw, 58px)/.95 var(--display); letter-spacing: .01em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--accent); }
+.lede { max-width: 66ch; color: var(--muted); margin: 0; }
+
+.viewport { position: relative; border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+  aspect-ratio: 16 / 9; max-width: 100%; background: #0b0908; }
+@media (max-width: 640px) { .viewport { aspect-ratio: 4 / 5; } }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.hud { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; justify-content: space-between;
+  gap: 8px; pointer-events: none; font: 12px/1.4 var(--mono); color: #efe6df; text-shadow: 0 1px 2px #000; flex-wrap: wrap; }
+.hud b { color: #ffb48c; font-weight: 500; }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; font: 13px var(--mono); color: #a8968a; }
+.tools { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.tools button, .tools label { font: 500 12px/1 var(--mono); color: #efe6df; background: rgba(21,17,15,.78);
+  border: 1px solid #4a3c33; border-radius: 3px; padding: 8px 10px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.tools button:hover { border-color: #e0703e; }
+.tools input[type=range] { width: 90px; accent-color: #e0703e; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.channels { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 820px) { .channels { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ch { text-align: left; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
+  padding: 12px 14px; cursor: pointer; display: grid; gap: 4px; font: inherit; min-width: 0; }
+.ch:hover { border-color: var(--muted); }
+.ch[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ch .res { font: 700 30px/1 var(--display); }
+.ch .res small { font-size: 16px; color: var(--muted); }
+.ch .name { font-weight: 600; }
+.ch .meta { font: 12px/1.45 var(--mono); color: var(--muted); }
+.tag { justify-self: start; font: 500 10px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  padding: 4px 6px; border-radius: 2px; background: var(--accent); color: var(--accent-ink); }
+.tag.sim { background: var(--sim); color: var(--bg); }
+.samples { font: 500 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
+
+.notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; padding-top: 6px; }
+@media (max-width: 860px) { .notes { grid-template-columns: minmax(0, 1fr); } }
+.notes section { display: grid; gap: 8px; align-content: start; min-width: 0; }
+h2 { font: 700 22px/1.1 var(--display); letter-spacing: .02em; margin: 0; text-transform: uppercase; text-wrap: balance; }
+.notes p { margin: 0; max-width: 62ch; }
+dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font: 13px/1.4 var(--mono); }
+dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+.big { font: 700 40px/1 var(--display); color: var(--accent); }
+footer { font: 12px/1.5 var(--mono); color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Kaiser Crater · 47.23°S 19.48°E · 4.03 × 4.03 km · true 1:1 scale</div>
+    <h1>Real dunes on Mars, <span>at real size</span></h1>
+    <p class="lede">Every height in this scene was measured from orbit. Switch satellites to see how much of the same 4 km of sand each one can actually resolve. The dune slip faces here are over 200 m tall.</p>
+  </header>
+
+  <div class="viewport" id="vp">
+    <canvas id="gl" aria-label="3D terrain of Kaiser Crater dunes"></canvas>
+    <div class="loading" id="loading">Loading terrain…</div>
+    <div class="hud"><div id="hudL">Drag to orbit · scroll or pinch to zoom · right-drag to pan</div><div id="hudR"></div></div>
+    <div class="tools">
+      <label for="exag">Vertical ×<span id="exagv">1.0</span><input id="exag" type="range" min="1" max="3" step="0.1" value="1"></label>
+      <button id="texBtn" type="button">Photo texture: on</button>
+      <button id="ground" type="button">Stand on the crest</button>
+      <button id="reset" type="button">Overview</button>
+    </div>
+  </div>
+
+  <div class="channels" id="channels"></div>
+
+  <div class="notes">
+    <section>
+      <h2>What the converter fixed</h2>
+      <p>USGS stores these DTMs in a global map projection where east–west distances are only true at the equator. At 47°S, a naive import stretches every dune <strong>47% too wide</strong>. The converter reprojects each site onto a local true-scale grid.</p>
+      <p>The photo for this site also carried a georeference <strong>8.26 km off</strong> from its own terrain. The converter caught that automatically by matching the image against the terrain's slopes.</p>
+    </section>
+    <section>
+      <h2>Drop it into Unreal</h2>
+      <p>Each site exports a 16-bit heightmap, a Unity RAW file, the photo texture, raw float heights for engineers, and these exact import values:</p>
+      <dl id="unreal"></dl>
+    </section>
+    <section>
+      <h2>The whole archive</h2>
+      <div class="big">981 sites</div>
+      <dl>
+        <dt>Size</dt><dd>3.29 TB, all CC0 public domain</dd>
+        <dt>Dune sites</dt><dd>91</dd>
+        <dt>Mars covered</dt><dd>under 0.08% at 1 m</dd>
+        <dt>This site</dt><dd>9 s to convert</dd>
+      </dl>
+      <p>The same script runs on every one. More stereo passes from orbit mean more of Mars at this sharpness.</p>
+    </section>
+  </div>
+
+  <footer>Data: NASA/JPL/University of Arizona HiRISE (DTEEC_013017_1325_013083_1325_U01), USGS Astrogeology analysis-ready COGs on AWS Open Data; MGS MOLA 463 m global DEM; HRSC + MOLA blended 200 m global DEM (DLR/FU Berlin/ESA). The CTX-class layer is simulated by averaging the HiRISE terrain to 20 m. Converted with marsmaker/hirise2engine.py.</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const LAYERS = [
+  { key: "mola",   res: "463", unit: "m", name: "MOLA laser altimeter", meta: "Mars Global Surveyor · 1997–2006 · whole planet", sim: false },
+  { key: "hrsc",   res: "200", unit: "m", name: "HRSC + MOLA blend",    meta: "Mars Express stereo · 2004– · nearly global", sim: false },
+  { key: "ctx",    res: "20",  unit: "m", name: "CTX-class stereo",     meta: "Mars Reconnaissance Orbiter · patchy coverage", sim: true },
+  { key: "hirise", res: "1",   unit: "m", name: "HiRISE stereo",        meta: "Mars Reconnaissance Orbiter · 981 sites", sim: false },
+];
+const SIZE = 4032, N = 1009;
+const canvas = document.getElementById("gl"), vp = document.getElementById("vp");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xc79a7a);
+scene.fog = new THREE.Fog(0xc79a7a, 3500, 9000);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 30000);
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.maxPolarAngle = Math.PI * 0.495;
+scene.add(new THREE.HemisphereLight(0xffe2cc, 0x4a2a1a, 0.55));
+const sun = new THREE.DirectionalLight(0xfff0e0, 0.95); sun.position.set(-1, 0.8, -0.6); scene.add(sun);
+
+const geo = new THREE.PlaneGeometry(SIZE, SIZE, N - 1, N - 1); geo.rotateX(-Math.PI / 2);
+const pos = geo.attributes.position;
+const plainMat = new THREE.MeshStandardMaterial({ color: 0xb87a55, roughness: 0.95 });
+const texMat = new THREE.MeshStandardMaterial({ color: 0xffd2b0, roughness: 0.95 });
+const mesh = new THREE.Mesh(geo, texMat); scene.add(mesh);
+// Curiosity-sized box (3 m × 2.2 m × 2.7 m) for scale
+const rover = new THREE.Mesh(new THREE.BoxGeometry(2.7, 2.2, 3), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x3a5cff, emissiveIntensity: .6 }));
+scene.add(rover);
+
+let info, base = 0, exag = 1, current = "hirise", heights = {}, shown = new Float32Array(N * N), anim = null;
+
+function sampleLayer(arr, n) {          // bilinear-resample a coarse n×n grid to N×N vertices
+  const out = new Float32Array(N * N), s = (n - 1) / (N - 1);
+  for (let r = 0; r < N; r++) { const y = r * s, y0 = Math.min(Math.floor(y), n - 2), fy = y - y0;
+    for (let c = 0; c < N; c++) { const x = c * s, x0 = Math.min(Math.floor(x), n - 2), fx = x - x0, i = y0 * n + x0;
+      out[r * N + c] = (arr[i] * (1 - fx) + arr[i + 1] * fx) * (1 - fy) + (arr[i + n] * (1 - fx) + arr[i + n + 1] * fx) * fy; } }
+  return out;
+}
+async function decodeHeights(key, L) {  // heights packed as 16-bit: red = high byte, green = low byte
+  const blob = await (await fetch(key + "_h16.png")).blob();
+  const bmp = await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+  const c = document.createElement("canvas"); c.width = bmp.width; c.height = bmp.height;
+  const ctx = c.getContext("2d", { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0);
+  const px = ctx.getImageData(0, 0, c.width, c.height).data, out = new Float32Array(c.width * c.height);
+  const k = (L.max - L.min) / 65535;
+  for (let i = 0; i < out.length; i++) out[i] = L.min + ((px[i * 4] << 8) | px[i * 4 + 1]) * k;
+  return out;
+}
+function apply() {
+  for (let i = 0; i < N * N; i++) pos.setY(i, (shown[i] - base) * exag);
+  pos.needsUpdate = true; geo.computeVertexNormals();
+  placeRover();
+}
+function placeRover() {
+  const i = crestIdx; rover.position.set(pos.getX(i) + 6, pos.getY(i) + 1.1 * exag, pos.getZ(i));
+  rover.scale.set(1, exag, 1);
+}
+function show(key) {
+  current = key;
+  document.querySelectorAll(".ch").forEach(b => b.setAttribute("aria-pressed", b.dataset.key === key));
+  const from = shown.slice(), to = heights[key], t0 = performance.now();
+  const dur = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 700;
+  anim = (now) => { const k = dur ? Math.min(1, (now - t0) / dur) : 1, e = k * k * (3 - 2 * k);
+    for (let i = 0; i < shown.length; i++) shown[i] = from[i] + (to[i] - from[i]) * e;
+    apply(); if (k >= 1) anim = null; };
+  const L = info.layers[key];
+  document.getElementById("hudR").innerHTML = `<b>${LAYERS.find(l => l.key === key).name}</b> · relief ${L.relief_m.toFixed(0)} m · ${L.min.toFixed(0)}–${L.max.toFixed(0)} m elevation`;
+}
+let crestIdx = 0;
+function overview() { camera.position.set(-2600, 1900, 2900); controls.target.set(0, 80, 0); }
+function standOnCrest() {
+  const x = pos.getX(crestIdx), y = pos.getY(crestIdx), z = pos.getZ(crestIdx);
+  camera.position.set(x - 40, y + 2 * exag + 1.8, z + 25); controls.target.set(x + 600, y - 60 * exag, z - 300);
+}
+
+async function load() {
+  info = await (await fetch("layers.json")).json();
+  const grids = await Promise.all(LAYERS.map(l => decodeHeights(l.key, info.layers[l.key])));
+  LAYERS.forEach((l, i) => heights[l.key] = sampleLayer(grids[i], info.layers[l.key].n));
+  base = info.layers.hirise.min;
+  const h = heights.hirise; let m = -1e9; for (let i = 0; i < h.length; i++) if (h[i] > m) { m = h[i]; crestIdx = i; }
+  shown.set(heights.hirise);
+  const tex = await new THREE.TextureLoader().loadAsync("texture.jpg");
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy(); texMat.map = tex; texMat.needsUpdate = true;
+  apply(); overview(); buildChannels(); show("hirise");
+  const u = info.unreal;
+  document.getElementById("unreal").innerHTML =
+    `<dt>Heightmap</dt><dd>4033 × 4033, 16-bit PNG</dd><dt>Scale X / Y</dt><dd>${u.scale_xy.toFixed(1)}</dd>` +
+    `<dt>Scale Z</dt><dd>${u.scale_z.toFixed(2)}</dd><dt>Location Z</dt><dd>${(u.location_z_cm).toFixed(0)} cm</dd>` +
+    `<dt>Elevation</dt><dd>${info.layers.hirise.min.toFixed(0)}–${info.layers.hirise.max.toFixed(0)} m above datum</dd>`;
+  document.getElementById("loading").hidden = true;
+}
+function buildChannels() {
+  const box = document.getElementById("channels"), area = SIZE * SIZE;
+  box.innerHTML = LAYERS.map(l => {
+    const r = +l.res, samples = Math.round(area / (r * r));
+    return `<button class="ch" type="button" data-key="${l.key}" aria-pressed="false">
+      <span class="tag ${l.sim ? "sim" : ""}">${l.sim ? "simulated" : "real data"}</span>
+      <span class="res">${l.res}<small> ${l.unit}/pixel</small></span>
+      <span class="name">${l.name}</span>
+      <span class="meta">${l.meta}</span>
+      <span class="samples">${samples.toLocaleString()} heights here</span></button>`; }).join("");
+  box.querySelectorAll(".ch").forEach(b => b.addEventListener("click", () => show(b.dataset.key)));
+}
+document.getElementById("exag").addEventListener("input", e => { exag = +e.target.value;
+  document.getElementById("exagv").textContent = exag.toFixed(1); apply(); });
+document.getElementById("texBtn").addEventListener("click", e => { const on = mesh.material === plainMat;
+  mesh.material = on ? texMat : plainMat; e.target.textContent = "Photo texture: " + (on ? "on" : "off"); });
+document.getElementById("ground").addEventListener("click", standOnCrest);
+document.getElementById("reset").addEventListener("click", overview);
+
+function resize() { const w = vp.clientWidth, h = vp.clientHeight; renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix(); }
+new ResizeObserver(resize).observe(vp); resize();
+renderer.setAnimationLoop(now => { if (anim) anim(now); controls.update(); renderer.render(scene, camera); });
+load().catch(err => { document.getElementById("loading").textContent = "Terrain failed to load: " + err.message; });
+</script>

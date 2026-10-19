@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "marsmaker_importer"
+version = "0.1.0"
+name = "MarsMaker HiRISE terrain importer"
+tagline = "Import real HiRISE Mars terrain at 1:1 scale"
+maintainer = "MarsMaker contributors"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["SPDX:MIT"]
+tags = ["Import-Export", "Mesh"]
+
+[permissions]
+files = "Read converted MarsMaker terrain tiles from disk"

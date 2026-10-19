@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marsmaker Monitor</title>
+<style>
+:root {
+  --bg: #050806; --panel: #08100b; --line: #17301f; --fg: #9dffb8; --dim: #3f7a52;
+  --amber: #ffb547; --red: #ff5a4f; --blue: #6cc7ff; --done: #2bd46a;
+  --mono: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.35 var(--mono); }
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); }
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr; gap: 10px; padding: 10px; }
+.bar { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; border: 1px solid var(--line);
+  background: var(--panel); padding: 8px 12px; }
+.bar h1 { font-size: 15px; margin: 0; letter-spacing: .18em; color: var(--fg); text-shadow: 0 0 8px rgba(80,255,140,.5); }
+.stat { color: var(--dim); } .stat b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat.warn b { color: var(--amber); } .stat.bad b { color: var(--red); }
+.grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(340px, 1fr); grid-template-rows: 2fr 1fr 1fr; gap: 10px; min-height: 0; }
+@media (max-width: 1000px) { .grid { grid-template-columns: 1fr; grid-template-rows: auto; } }
+.q { border: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.q > header { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line);
+  color: var(--dim); letter-spacing: .14em; font-size: 11px; text-transform: uppercase; }
+.q > header b { color: var(--fg); font-weight: 500; }
+.cams-q { grid-row: span 3; }
+.cams { flex: 1; min-height: 0; padding: 6px; display: grid; gap: 6px; grid-template-columns: repeat(var(--cc, 2), minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr); }
+.cam { position: relative; background: #000; border: 1px solid #1d6b3a; min-height: 0; overflow: hidden; }
+.cam img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.cam .lbl { position: absolute; left: 0; top: 0; padding: 2px 6px; font-size: 11px; background: rgba(0,0,0,.7); color: var(--fg); letter-spacing: .06em; }
+.cam .rec { position: absolute; right: 6px; top: 4px; font-size: 10px; color: var(--red); }
+.cam .rec::before { content: "● "; animation: pulse 1s infinite; }
+.cam.stale { border-color: var(--line); opacity: .55; }
+.stream-wrap { position: relative; flex: 1; min-height: 0; }
+.wall { position: absolute; inset: 0; padding: 6px; display: grid; gap: 6px;
+  grid-template-columns: repeat(var(--wc, 2), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
+.screen { border: 1px solid var(--line); background: rgba(3,8,5,.82); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.screen.hot { border-color: #2a7a45; box-shadow: 0 0 10px rgba(60,255,120,.18) inset; }
+.screen h3 { margin: 0; padding: 3px 8px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--bg);
+  background: var(--dim); display: flex; justify-content: space-between; gap: 6px; }
+.screen.hot h3 { background: var(--fg); }
+.screen.agent h3 { background: var(--amber); } .screen.batch h3 { background: var(--blue); }
+.screen .log { position: static; flex: 1; padding: 4px 8px; font-size: 11.5px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+#rain { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .22; }
+.stream-wrap .log { position: absolute; inset: 0; margin: 0; overflow: auto; text-shadow: 0 0 6px rgba(80,255,140,.35); }
+.log .src { color: var(--dim); } .log .say { color: #e9fff0; } .log .tool { color: var(--fg); } .log .cmd { color: #5fd38a; }
+.log .result { color: #2f8a4e; } .log .think { color: #1f5a33; }
+.log .agent .src { color: var(--amber); } .log .batch .src { color: var(--blue); }
+.log div { white-space: pre-wrap; word-break: break-word; animation: in .25s ease-out; }
+@keyframes in { from { opacity: 0; transform: translateY(4px); } }
+.matrix { flex: 1; overflow: auto; padding: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--cell), 1fr)); gap: 3px; align-content: start; }
+.cell { aspect-ratio: 1; background: #0c1a11; border: 1px solid #12271a; position: relative; overflow: hidden; }
+.cell img { width: 100%; height: 100%; object-fit: cover; display: block; filter: sepia(1) hue-rotate(70deg) saturate(2.2) brightness(.95); }
+.cell.queued { background: #0c1a11; }
+.cell.downloading { background: #0b2235; border-color: var(--blue); animation: pulse 1s infinite; }
+.cell.converting { background: #3a2a08; border-color: var(--amber); animation: pulse .6s infinite; }
+.cell.done { border-color: #1d6b3a; background: #0f3a1f; }
+.cell.failed { background: #3a0d0b; border-color: var(--red); }
+.cell.skipped { border-color: #1d6b3a; opacity: .65; }
+@keyframes pulse { 50% { filter: brightness(1.8); } }
+@media (prefers-reduced-motion: reduce) { .cell { animation: none !important; } }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 9px; height: 9px; margin-right: 4px; vertical-align: -1px; border: 1px solid; }
+.tools { display: flex; gap: 6px; }
+.tools button { font: inherit; font-size: 11px; color: var(--fg); background: transparent; border: 1px solid var(--line); padding: 2px 8px; cursor: pointer; }
+.tools button[aria-pressed="true"] { border-color: var(--fg); }
+canvas { display: block; width: 100%; flex: 1; min-height: 0; }
+.log { flex: 1; overflow: auto; padding: 8px 10px; margin: 0; white-space: pre-wrap; font-size: 12px; }
+.log .ok { color: var(--done); } .log .err { color: var(--red); } .log .act { color: var(--amber); } .log .dl { color: var(--blue); }
+.tip { position: fixed; pointer-events: none; background: #000; border: 1px solid var(--fg); padding: 6px 8px; font-size: 12px; max-width: 360px; z-index: 5; }
+.split { display: grid; grid-template-rows: 1fr 90px; min-height: 0; flex: 1; }
+.empty { color: var(--dim); padding: 16px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar">
+    <h1>MARSMAKER // HIRISE BATCH</h1>
+    <span class="stat">done <b id="sDone">0</b>/<b id="sTotal">0</b></span>
+    <span class="stat">active <b id="sAct">0</b></span>
+    <span class="stat bad">failed <b id="sFail">0</b></span>
+    <span class="stat">net in <b id="sNet">0</b> MB/s</span>
+    <span class="stat">cpu <b id="sCpu">0</b>%</span>
+    <span class="stat">ram <b id="sRam">0</b>%</span>
+    <span class="stat">output <b id="sOut">0</b> GB</span>
+    <span class="stat">cache <b id="sCache">0</b> GB</span>
+    <span class="stat" id="freeWrap">D: free <b id="sFree">0</b> GB</span>
+    <span class="stat">eta <b id="sEta">--</b></span>
+  </div>
+  <div class="grid">
+    <section class="q cams-q">
+      <header><span>Video wall · live game test windows</span><b id="camCount">0 feeds</b></header>
+      <div class="cams" id="cams"><div class="empty">No game windows open right now. Feeds appear here automatically when a test launches.</div></div>
+    </section>
+    <section class="q stream-q">
+      <header><span>Live activity · every session on this PC</span><b id="evRate">0 lines/min</b></header>
+      <div class="stream-wrap"><canvas id="rain"></canvas><div class="wall" id="wall"></div></div>
+    </section>
+    <section class="q">
+      <header><span>Site matrix · <b id="mCount">0</b></span>
+        <span class="legend"><span><i style="border-color:#1d4d2b"></i>queued</span><span><i style="border-color:var(--blue)"></i>dl</span>
+          <span><i style="border-color:var(--amber)"></i>convert</span><span><i style="border-color:var(--done)"></i>done</span><span><i style="border-color:var(--red)"></i>fail</span></span>
+        <span class="tools"><button id="fDune" aria-pressed="true" type="button">dunes</button><button id="fAll" aria-pressed="false" type="button">all 981</button></span>
+      </header>
+      <div class="matrix" id="matrix"></div>
+    </section>
+    <section class="q">
+      <header><span>Mars · site positions</span><b id="clock"></b></header>
+      <div class="split"><canvas id="map"></canvas><canvas id="spark"></canvas></div>
+    </section>
+  </div>
+</div>
+<div class="tip" id="tip" hidden></div>
+<script>
+let catalog = [], filter = "dune", prev = {}, cells = {}, hist = [], started = null, logLines = [];
+const $ = id => document.getElementById(id);
+const COLORS = { queued: "#1d4d2b", downloading: "#6cc7ff", converting: "#ffb547", done: "#2bd46a", skipped: "#2bd46a", failed: "#ff5a4f" };
+
+function visible() { return filter === "all" ? catalog : catalog.filter(c => /dune/i.test(c.what)); }
+function buildMatrix() {
+  const list = visible(), m = $("matrix"); m.innerHTML = ""; cells = {};
+  m.style.setProperty("--cell", list.length > 300 ? "22px" : "54px");
+  for (const c of list) { const d = document.createElement("div"); d.className = "cell queued"; d.dataset.site = c.site;
+    m.appendChild(d); cells[c.site] = d; }
+  $("mCount").textContent = list.length; render(lastStatus);
+}
+function setFilter(f) { filter = f; $("fDune").setAttribute("aria-pressed", f === "dune"); $("fAll").setAttribute("aria-pressed", f === "all"); buildMatrix(); }
+$("fDune").onclick = () => setFilter("dune"); $("fAll").onclick = () => setFilter("all");
+
+const esc = t => String(t).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const screens = {};
+function screenFor(src) {
+  if (screens[src]) return screens[src];
+  const box = document.createElement("div"); box.className = "screen " + (src === "agent" || src === "batch" ? src : "");
+  const title = { agent: "mars batch agent", batch: "pipeline events" }[src] || src;
+  box.innerHTML = `<h3><span>${esc(title)}</span><span class="n">0</span></h3><div class="log"></div>`;
+  $("wall").appendChild(box); screens[src] = { box, log: box.querySelector(".log"), n: box.querySelector(".n"), count: 0, last: 0 };
+  const k = Object.keys(screens).length; $("wall").style.setProperty("--wc", k <= 1 ? 1 : k <= 4 ? 2 : 3);
+  return screens[src];
+}
+function addLine(src, kind, text) {
+  const sc = screenFor(src), d = document.createElement("div");
+  d.innerHTML = `<span class="src">${new Date().toTimeString().slice(0, 8)}</span> <span class="${kind}">${esc(text)}</span>`;
+  sc.log.appendChild(d); while (sc.log.childElementCount > 120) sc.log.firstChild.remove();
+  sc.n.textContent = ++sc.count; sc.last = Date.now(); rateWin.push(Date.now()); dropStream.push(text);
+}
+setInterval(() => { const now = Date.now(); for (const k in screens) screens[k].box.classList.toggle("hot", now - screens[k].last < 5000); }, 500);
+let rateWin = [], dropStream = [];
+function log(cls, text) { addLine("batch", cls === "err" ? "say" : "tool", text); }
+const gb = b => (b / 1e9).toFixed(1);
+
+let lastStatus = null;
+function render(s) {
+  if (!s) return;
+  const man = s.manifest || {}, list = visible();
+  let done = 0, act = 0, fail = 0;
+  for (const c of list) {
+    const e = man[c.site], st = e ? e.status : "queued", cell = cells[c.site];
+    if (st === "done" || st === "skipped") done++; else if (st === "failed") fail++; else if (st === "downloading" || st === "converting") act++;
+    if (cell && !cell.classList.contains(st)) {
+      cell.className = "cell " + st;
+      if (st === "done" && !cell.firstChild) { const img = new Image(); img.alt = ""; img.src = "/preview/" + c.site; img.onerror = () => img.remove(); cell.appendChild(img); }
+    }
+    const was = prev[c.site];
+    if (e && was !== st) {
+      if (st === "downloading") log("dl", `↓ ${c.site}  ${c.what}`);
+      else if (st === "converting") log("act", `⚙ ${c.site}`);
+      else if (st === "done") log("ok", `✓ ${c.site}  ${e.seconds ? e.seconds.toFixed(0) + "s" : ""} ${e.out_bytes ? (e.out_bytes / 1e6).toFixed(0) + " MB" : ""}`);
+      else if (st === "failed") log("err", `✗ ${c.site}  ${e.error || ""}`);
+      prev[c.site] = st;
+    }
+  }
+  if (Object.keys(man).length && !started) started = s.time;
+  $("sDone").textContent = done; $("sTotal").textContent = list.length; $("sAct").textContent = act; $("sFail").textContent = fail;
+  $("sNet").textContent = (s.net_in / 1e6).toFixed(1); $("sCpu").textContent = s.cpu.toFixed(0); $("sRam").textContent = s.ram.toFixed(0);
+  $("sOut").textContent = gb(s.out_bytes); $("sCache").textContent = gb(s.cache_bytes); $("sFree").textContent = gb(s.disk_free);
+  $("freeWrap").className = "stat" + (s.disk_free < 10e9 ? " bad" : s.disk_free < 25e9 ? " warn" : "");
+  if (started && done > 0 && done < list.length) { const per = (s.time - started) / done, left = per * (list.length - done);
+    $("sEta").textContent = left > 3600 ? (left / 3600).toFixed(1) + " h" : Math.ceil(left / 60) + " min"; }
+  else $("sEta").textContent = done && done >= list.length ? "complete" : "--";
+  hist.push(s.net_in / 1e6); hist = hist.slice(-240);
+  drawMap(man); drawSpark();
+}
+
+function fit(cv) { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  if (cv.width !== Math.round(r.width * d) || cv.height !== Math.round(r.height * d)) { cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
+  const g = cv.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); return [g, r.width, r.height]; }
+function drawMap(man) {
+  const [g, w, h] = fit($("map")); g.clearRect(0, 0, w, h);
+  const mw = Math.min(w - 20, (h - 20) * 2), mh = mw / 2, ox = (w - mw) / 2, oy = (h - mh) / 2;
+  g.strokeStyle = "#17301f"; g.lineWidth = 1;
+  for (let lon = -180; lon <= 180; lon += 30) { const x = ox + (lon + 180) / 360 * mw; g.beginPath(); g.moveTo(x, oy); g.lineTo(x, oy + mh); g.stroke(); }
+  for (let lat = -90; lat <= 90; lat += 30) { const y = oy + (90 - lat) / 180 * mh; g.beginPath(); g.moveTo(ox, y); g.lineTo(ox + mw, y); g.stroke(); }
+  g.strokeStyle = "#3f7a52"; g.strokeRect(ox, oy, mw, mh);
+  const vis = new Set(visible().map(c => c.site));
+  for (const c of catalog) {
+    const st = man[c.site] ? man[c.site].status : "queued", on = vis.has(c.site);
+    const x = ox + ((c.lon + 540) % 360) / 360 * mw, y = oy + (90 - c.lat) / 180 * mh;
+    g.fillStyle = on ? COLORS[st] || COLORS.queued : "#10301a"; const r = on && st !== "queued" ? 3 : 1.6;
+    g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+  }
+}
+function drawSpark() {
+  const [g, w, h] = fit($("spark")); g.clearRect(0, 0, w, h);
+  const max = Math.max(60, ...hist); g.strokeStyle = "#17301f"; g.beginPath(); g.moveTo(0, h - 1); g.lineTo(w, h - 1); g.stroke();
+  g.beginPath(); hist.forEach((v, i) => { const x = i / 239 * w, y = h - 6 - v / max * (h - 16); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.strokeStyle = "#6cc7ff"; g.lineWidth = 1.5; g.stroke();
+  g.fillStyle = "#3f7a52"; g.font = "11px Consolas, monospace"; g.fillText(`download MB/s (peak scale ${max.toFixed(0)})`, 8, 14);
+}
+
+$("matrix").addEventListener("mousemove", e => {
+  const site = e.target.closest(".cell")?.dataset.site, tip = $("tip");
+  if (!site) { tip.hidden = true; return; }
+  const c = catalog.find(x => x.site === site), m = lastStatus?.manifest?.[site];
+  tip.innerHTML = `${site}<br>${c.what}<br>${c.lat.toFixed(2)}°, ${c.lon.toFixed(2)}°E · ${c.gsd?.toFixed(2)} m` + (m ? `<br>status: ${m.status}${m.error ? "<br>" + m.error : ""}` : "");
+  tip.hidden = false; tip.style.left = Math.min(e.clientX + 14, innerWidth - 370) + "px"; tip.style.top = (e.clientY + 14) + "px";
+});
+$("matrix").addEventListener("mouseleave", () => $("tip").hidden = true);
+
+async function tick() {
+  try { lastStatus = await (await fetch("/status")).json(); render(lastStatus);
+    $("clock").textContent = new Date().toTimeString().slice(0, 8); }
+  catch { $("clock").textContent = "monitor server offline"; }
+}
+let since = 0;
+async function activity() {
+  try { const ev = await (await fetch("/activity?since=" + since)).json();
+    for (const e of ev) { addLine(e.src, e.kind, e.text); since = e.id; } } catch {}
+  const now = Date.now(); rateWin = rateWin.filter(x => now - x < 60000); $("evRate").textContent = rateWin.length + " lines/min";
+}
+// matrix rain: columns drop characters pulled from the live text
+const drops = [];
+function rain() {
+  const [g, w, h] = fit($("rain")), size = 14, cols = Math.floor(w / size);
+  while (drops.length < cols) drops.push(Math.random() * -50);
+  g.fillStyle = "rgba(5,8,6,.18)"; g.fillRect(0, 0, w, h);
+  g.font = size + "px Consolas, monospace"; g.fillStyle = "#3dff7a";
+  const src = dropStream.length ? dropStream[dropStream.length - 1 - Math.floor(Math.random() * Math.min(40, dropStream.length))] : "MARS HIRISE 0123456789";
+  for (let i = 0; i < cols; i++) {
+    const ch = src[Math.floor(Math.random() * src.length)] || "0";
+    g.fillText(ch, i * size, drops[i] * size);
+    if (drops[i] * size > h && Math.random() > .975) drops[i] = 0; drops[i] += 1;
+  }
+  dropStream = dropStream.slice(-200);
+}
+const camEls = {};
+async function cams() {
+  let list = []; try { list = await (await fetch("/cams")).json(); } catch { return; }
+  const box = $("cams"), ids = new Set(list.map(c => String(c.id)));
+  if (list.length && box.querySelector(".empty")) box.innerHTML = "";
+  for (const id in camEls) if (!ids.has(id)) { camEls[id].remove(); delete camEls[id]; }
+  for (const c of list) {
+    let el = camEls[c.id];
+    if (!el) { el = document.createElement("div"); el.className = "cam";
+      el.innerHTML = `<img alt=""><span class="lbl">${esc(c.title)}</span><span class="rec">LIVE</span>`; box.appendChild(el); camEls[c.id] = el; }
+    const img = el.querySelector("img"), next = new Image();
+    next.onload = () => { img.src = next.src; }; next.src = `/cam/${c.id}.jpg?t=${Date.now()}`;
+    el.classList.toggle("stale", Date.now() / 1000 - c.t > 5);
+  }
+  const n = list.length; box.style.setProperty("--cc", n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4);
+  $("camCount").textContent = n + (n === 1 ? " feed" : " feeds");
+  if (!n && !box.querySelector(".empty")) box.innerHTML = '<div class="empty">No game windows open right now. Feeds appear here automatically when a test launches.</div>';
+}
+(async () => { setInterval(cams, 500); cams(); catalog = await (await fetch("/catalog")).json(); buildMatrix(); tick(); setInterval(tick, 1000);
+  activity(); setInterval(activity, 700);
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(rain, 60); })();
+addEventListener("resize", () => lastStatus && render(lastStatus));
+</script>
+</body>
+</html>

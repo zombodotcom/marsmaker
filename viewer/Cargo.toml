@@ -1,0 +1,32 @@
+[package]
+name = "marsmaker-viewer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Drive a dune buggy on real HiRISE Mars terrain"
+
+[dependencies]
+bevy = "0.20.0"
+png = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# fast physics/terrain code even in debug builds; the engine itself fully optimised
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 3
+
+# browser build (wasm32-unknown-unknown): site files are fetched over HTTP, flags come from the URL
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+web-sys = { version = "0.3.106", features = ["Window", "Location", "Response"] }
+
+# size-optimised profile for the browser build: cargo build --profile web --target wasm32-unknown-unknown
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+codegen-units = 1

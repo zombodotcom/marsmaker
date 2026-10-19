@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarsMaker Mission Control</title>
+<style>
+:root {
+  --bg: #120d0a; --panel: #1c1511; --line: #3a2a20; --fg: #f3e6da; --dim: #a8907d;
+  --mars: #e0703a; --ok: #6fcf7f; --doing: #f2b84b; --bad: #ef5a4f; --blue: #6fb4e8;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: baseline; gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { margin: 0; font-size: 18px; letter-spacing: .04em; color: var(--mars); }
+header .clock { color: var(--dim); margin-left: auto; font-variant-numeric: tabular-nums; }
+.now { padding: 12px 20px; background: linear-gradient(90deg, rgba(224,112,58,.18), transparent); border-bottom: 1px solid var(--line); font-size: 15px; }
+.now b { color: var(--mars); margin-right: 8px; }
+.grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(320px, 1.15fr) minmax(340px, 1.35fr); gap: 14px; padding: 14px 20px; }
+@media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+section h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); display: flex; justify-content: space-between; }
+ul.check { list-style: none; margin: 0; padding: 0; }
+ul.check li { display: flex; gap: 9px; padding: 5px 0; border-bottom: 1px dashed rgba(255,255,255,.05); }
+ul.check .box { flex: none; width: 18px; text-align: center; font-weight: 700; }
+li.done .box { color: var(--ok); } li.done .txt { color: var(--dim); }
+li.doing .box { color: var(--doing); } li.doing .txt { color: var(--fg); font-weight: 600; }
+li.todo .box { color: #6d5848; }
+li.blocked .box { color: var(--bad); }
+.note { color: var(--dim); font-size: 12px; display: block; }
+.meters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.meter .lbl { color: var(--dim); font-size: 12px; display: flex; justify-content: space-between; }
+.bar { height: 10px; background: #2a1f18; border-radius: 5px; overflow: hidden; margin-top: 4px; }
+.bar i { display: block; height: 100%; background: var(--ok); transition: width .6s; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; }
+td, th { padding: 4px 6px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.05); vertical-align: top; }
+th { color: var(--dim); font-weight: 500; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; width: 58px; }
+td.name { width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td .where { color: var(--dim); font-size: 11px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed { height: 62vh; overflow: auto; font: 12.5px/1.45 Consolas, ui-monospace, monospace; }
+.feed div { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,.03); white-space: pre-wrap; word-break: break-word; }
+.feed .src { color: var(--blue); }
+.feed .say { color: var(--fg); } .feed .tool { color: var(--dim); } .feed .user { color: var(--mars); font-weight: 600; }
+.pipe .row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+.pipe .row span b { font-size: 18px; color: var(--fg); margin-right: 4px; }
+.pipe .row span { color: var(--dim); }
+pre.log { margin: 6px 0 0; font: 11.5px/1.4 Consolas, monospace; color: var(--dim); white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.filters button { background: #2a1f18; color: var(--fg); border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.filters button[aria-pressed="false"] { opacity: .45; }
+.stack { display: grid; gap: 14px; align-content: start; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MARSMAKER · MISSION CONTROL</h1>
+  <span id="progress" class="note"></span>
+  <span class="clock" id="clock">connecting…</span>
+</header>
+<div class="now"><b>NOW</b><span id="now">…</span></div>
+<div class="grid">
+  <section>
+    <h2><span>Checklist</span><span id="ckCount"></span></h2>
+    <ul class="check" id="check"></ul>
+  </section>
+  <div class="stack">
+    <section>
+      <h2><span>Your PC</span><span id="pcNote"></span></h2>
+      <div class="meters">
+        <div class="meter"><div class="lbl"><span>CPU</span><span id="cpuTxt"></span></div><div class="bar"><i id="cpuBar"></i></div></div>
+        <div class="meter"><div class="lbl"><span>RAM</span><span id="ramTxt"></span></div><div class="bar"><i id="ramBar"></i></div></div>
+      </div>
+      <table><thead><tr><th>Process</th><th class="num">CPU</th><th class="num">RAM</th></tr></thead><tbody id="procs"></tbody></table>
+    </section>
+    <section class="pipe">
+      <h2><span>Terrain pipeline</span></h2>
+      <div class="row" id="pipeRow"></div>
+      <pre class="log" id="pipeLog"></pre>
+    </section>
+    <section>
+      <h2><span>Viewer build (Bevy)</span></h2>
+      <pre class="log" id="buildLog">no build running</pre>
+    </section>
+  </div>
+  <section>
+    <h2><span>Live: every Claude session on this PC</span><span id="evRate"></span></h2>
+    <div class="filters" id="filters"></div>
+    <div class="feed" id="feed"></div>
+  </section>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const icon = { done: "✓", doing: "▶", todo: "○", blocked: "✕" };
+let since = 0, hidden = new Set(), seenSrc = new Set();
+const color = p => p > 85 ? "var(--bad)" : p > 60 ? "var(--doing)" : "var(--ok)";
+
+function filterBtn(src) {
+  if (seenSrc.has(src)) return; seenSrc.add(src);
+  const b = document.createElement("button"); b.textContent = src; b.setAttribute("aria-pressed", "true"); b.type = "button";
+  b.onclick = () => { const on = b.getAttribute("aria-pressed") === "true"; b.setAttribute("aria-pressed", String(!on));
+    on ? hidden.add(src) : hidden.delete(src);
+    document.querySelectorAll(".feed div").forEach(d => d.hidden = hidden.has(d.dataset.src)); };
+  $("filters").appendChild(b);
+}
+
+async function tick() {
+  let s;
+  try { s = await (await fetch("/state?since=" + since)).json(); }
+  catch { $("clock").textContent = "mission.py not running"; return; }
+  $("clock").textContent = new Date().toLocaleTimeString();
+
+  // checklist
+  const st = s.status || {}, items = st.checklist || [];
+  $("now").textContent = st.now || "";
+  const done = items.filter(i => i.state === "done").length;
+  $("ckCount").textContent = `${done}/${items.length}`;
+  $("progress").textContent = st.updated ? "status updated " + st.updated : "";
+  $("check").innerHTML = items.map(i => `<li class="${i.state}"><span class="box">${icon[i.state] || "○"}</span>
+    <span class="txt">${esc(i.text)}${i.note ? `<span class="note">${esc(i.note)}</span>` : ""}</span></li>`).join("");
+
+  // PC
+  const pc = s.pc;
+  $("cpuTxt").textContent = pc.cpu.toFixed(0) + "%"; $("cpuBar").style.width = pc.cpu + "%"; $("cpuBar").style.background = color(pc.cpu);
+  $("ramTxt").textContent = `${pc.ram_used_gb} / ${pc.ram_total_gb} GB`; $("ramBar").style.width = pc.ram + "%"; $("ramBar").style.background = color(pc.ram);
+  $("pcNote").textContent = pc.note ? pc.note : (pc.sampled ? `processes as of ${pc.sampled} (took ${pc.sample_s}s)` : "");
+  $("procs").innerHTML = pc.top.map(p => `<tr><td class="name" title="${esc(p.cmd)}">${esc(p.name)}${p.count > 1 ? " ×" + p.count : ""}
+      <span class="where" title="${esc(p.cwd)}">${esc(p.cwd || p.cmd)}</span></td>
+    <td class="num">${p.cpu.toFixed(0)}%</td><td class="num">${p.ram_gb.toFixed(1)}G</td></tr>`).join("");
+
+  // pipeline + build
+  const pl = s.pipeline, c = pl.counts;
+  $("pipeRow").innerHTML = `<span><b>${pl.sites_on_disk}</b>sites converted</span><span><b>${pl.catalog}</b>in catalog</span>` +
+    Object.entries(c).map(([k, v]) => `<span><b>${v}</b>${esc(k)}</span>`).join("");
+  $("pipeLog").textContent = pl.log.join("\n");
+  $("buildLog").textContent = s.build.length ? s.build.join("\n") : "no build log yet";
+
+  // feed
+  const feed = $("feed"), stick = feed.scrollTop + feed.clientHeight > feed.scrollHeight - 30;
+  for (const e of s.events) {
+    filterBtn(e.src); since = e.id;
+    const d = document.createElement("div"); d.dataset.src = e.src; d.hidden = hidden.has(e.src);
+    d.innerHTML = `<span class="src">[${esc(e.src)}]</span> <span class="${e.kind}">${e.kind === "user" ? "YOU: " : ""}${esc(e.text)}</span>`;
+    feed.appendChild(d);
+  }
+  while (feed.childElementCount > 1200) feed.firstChild.remove();
+  if (stick) feed.scrollTop = feed.scrollHeight;
+}
+tick(); setInterval(tick, 1500);
+</script>
+</body>
+</html>

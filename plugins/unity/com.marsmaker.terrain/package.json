@@ -1,0 +1,24 @@
+{
+  "name": "com.marsmaker.terrain",
+  "version": "0.1.0",
+  "displayName": "MarsMaker HiRISE Terrain Importer",
+  "description": "Imports MarsMaker site folders (NASA HiRISE Mars DTMs converted to 16-bit PNG tiles + meta.json) as real-scale Unity Terrain tiles or meshes. Tools > MarsMaker > Import Site.",
+  "unity": "2022.3",
+  "keywords": [
+    "terrain",
+    "mars",
+    "hirise",
+    "dtm",
+    "heightmap"
+  ],
+  "author": {
+    "name": "MarsMaker contributors"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "com.unity.modules.terrain": "1.0.0",
+    "com.unity.modules.terrainphysics": "1.0.0",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.physics": "1.0.0"
+  }
+}

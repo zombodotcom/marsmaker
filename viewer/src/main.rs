@@ -1,0 +1,471 @@
+//! MarsMaker viewer: drive a dune buggy on real HiRISE terrain at 1:1 scale.
+//!
+//!   marsmaker-viewer [SITE_DIR] [--step N] [--spawn X,Z] [--heading DEG] [--realistic] [--albedo]
+//!                    [--autodrive] [--weave A] [--throttle T] [--seconds N] [--shot OUT.png] [--shot-at T]
+//!                    [--log-every T] [--high-cam]
+//!
+//! In the browser the same flags come from the URL query, e.g. `?site=NAME&autodrive&albedo`
+//! (see WEB.md). SITE_DIR is a converted site folder (with meta.json); default is the Russell
+//! Crater megadune. Controls: W/S or arrows = throttle/reverse, A/D = steer, Space = brake,
+//! R = flip upright, C = toggle chase / high camera, Esc = quit. See README.md for the flags.
+
+mod buggy;
+mod terrain;
+
+use bevy::light::CascadeShadowConfigBuilder;
+use bevy::pbr::{DistanceFog, FogFalloff};
+use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
+use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
+use buggy::{Buggy, Controls, Tuning};
+use std::path::PathBuf;
+use terrain::{Loaded, LoadOptions, Progress, Site, Source, TerrainRender};
+
+const DEFAULT_SITE_NAME: &str = "PSP_007018_1255_PSP_007229_1255";
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_SITE: &str = r"D:\marsmaker_data\sites\PSP_007018_1255_PSP_007229_1255";
+
+#[derive(Resource, Clone)]
+struct Args {
+    site: String,
+    step: Option<usize>,
+    spawn: Option<Vec2>,
+    heading: f32,
+    realistic: bool,
+    albedo: bool,
+    autodrive: bool,
+    weave: f32,
+    throttle: f32,
+    seconds: Option<f32>,
+    shot: Option<PathBuf>,
+    shot_at: f32,
+    log_every: f32,
+    high_cam: bool,
+}
+
+impl Args {
+    fn parse_from(argv: impl IntoIterator<Item = String>) -> Self {
+        let mut a = Args {
+            site: String::new(),
+            step: None,
+            spawn: None,
+            heading: 0.0,
+            realistic: false,
+            albedo: false,
+            autodrive: false,
+            weave: 0.35,
+            throttle: 1.0,
+            seconds: None,
+            shot: None,
+            shot_at: 3.0,
+            log_every: 1.0,
+            high_cam: false,
+        };
+        let mut it = argv.into_iter();
+        let num = |s: Option<String>, flag: &str| -> f32 {
+            s.and_then(|s| s.parse().ok()).unwrap_or_else(|| panic!("{flag} needs a number"))
+        };
+        while let Some(s) = it.next() {
+            match s.as_str() {
+                "--step" => a.step = Some(num(it.next(), "--step") as usize),
+                "--spawn" => {
+                    let v = it.next().expect("--spawn needs X,Z");
+                    let p: Vec<f32> = v.split(',').map(|t| t.trim().parse().expect("--spawn X,Z")).collect();
+                    assert!(p.len() == 2, "--spawn needs X,Z");
+                    a.spawn = Some(Vec2::new(p[0], p[1]));
+                }
+                "--heading" => a.heading = num(it.next(), "--heading"),
+                "--realistic" => a.realistic = true,
+                "--albedo" => a.albedo = true,
+                "--autodrive" => a.autodrive = true,
+                "--high-cam" => a.high_cam = true,
+                "--weave" => a.weave = num(it.next(), "--weave"),
+                "--throttle" => a.throttle = num(it.next(), "--throttle"),
+                "--seconds" => a.seconds = Some(num(it.next(), "--seconds")),
+                "--shot" => a.shot = Some(PathBuf::from(it.next().expect("--shot needs a path"))),
+                "--shot-at" => a.shot_at = num(it.next(), "--shot-at"),
+                "--log-every" => a.log_every = num(it.next(), "--log-every"),
+                "--site" => a.site = it.next().expect("--site needs a value"),
+                f if f.starts_with("--") => panic!("unknown flag {f}"),
+                _ => a.site = s,
+            }
+        }
+        a
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn parse() -> Self {
+        let mut a = Self::parse_from(std::env::args().skip(1));
+        if a.site.is_empty() {
+            a.site = DEFAULT_SITE.into();
+        }
+        a
+    }
+
+    /// Browser: flags come from the URL query (`?site=NAME&autodrive&weave=0.2`); `site` is a
+    /// folder name under `sites/` next to the page (or any relative/absolute URL containing '/').
+    #[cfg(target_arch = "wasm32")]
+    fn parse() -> Self {
+        let search = web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default();
+        let mut argv = Vec::new();
+        for kv in search.trim_start_matches('?').split('&').filter(|s| !s.is_empty()) {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            let v = js_sys::decode_uri_component(v).ok().and_then(|s| s.as_string()).unwrap_or_else(|| v.to_string());
+            argv.push(format!("--{k}"));
+            if !v.is_empty() {
+                argv.push(v);
+            }
+        }
+        let mut a = Self::parse_from(argv);
+        if a.site.is_empty() {
+            a.site = DEFAULT_SITE_NAME.into();
+        }
+        if !a.site.contains('/') {
+            a.site = format!("sites/{}", a.site);
+        }
+        a
+    }
+}
+
+#[derive(Component)]
+struct Hud;
+
+#[derive(Resource)]
+struct CamMode {
+    dist: f32,
+    height: f32,
+}
+
+/// Seconds since the first frame after loading finished.
+#[derive(Resource, Default)]
+struct RunClock {
+    start: Option<f32>,
+    now: f32,
+}
+
+#[derive(Resource)]
+struct Loading {
+    task: Task<Result<Loaded, String>>,
+    progress: Progress,
+    name: String,
+}
+
+#[derive(Resource)]
+struct LoadFailed(String);
+
+fn main() {
+    let args = Args::parse();
+    let _ = DEFAULT_SITE_NAME;
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "MarsMaker - HiRISE dune buggy".into(),
+                resolution: (1280, 720).into(),
+                canvas: Some("#bevy".into()),
+                fit_canvas_to_parent: true,
+                ..default()
+            }),
+            ..default()
+        }))
+        .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0 } } else { CamMode { dist: 9.0, height: 3.2 } })
+        .insert_resource(args)
+        .insert_resource(ClearColor(Color::srgb(0.80, 0.62, 0.47)))
+        .insert_resource(GlobalAmbientLight { color: Color::srgb(1.0, 0.85, 0.7), brightness: 900.0, ..default() })
+        .insert_resource(Time::<Fixed>::from_hz(120.0))
+        .init_resource::<Controls>()
+        .init_resource::<RunClock>()
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (
+                finish_load,
+                clock,
+                input,
+                fine_window,
+                buggy::sync_visuals.run_if(resource_exists::<Buggy>),
+                chase_camera,
+                hud,
+                test_hooks,
+            )
+                .chain(),
+        )
+        .add_systems(FixedUpdate, physics)
+        .run();
+}
+
+fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let src = Source::new(args.site.clone());
+    let progress = Progress::default();
+    let opts = LoadOptions { step: args.step, albedo: args.albedo };
+    let task = IoTaskPool::get().spawn(terrain::load(src.clone(), opts, progress.clone()));
+    commands.insert_resource(Loading { task, progress, name: src.name() });
+
+    buggy::spawn_visuals(&mut commands, &mut meshes, &mut materials);
+    // placeholder low sun from the north-west; replaced by the image's sun once loaded
+    commands.spawn((
+        DirectionalLight { illuminance: 9000.0, shadow_maps_enabled: true, color: Color::srgb(1.0, 0.93, 0.82), ..default() },
+        Transform::from_xyz(-1.0, 0.75, -0.6).looking_at(Vec3::ZERO, Vec3::Y),
+        CascadeShadowConfigBuilder { maximum_distance: 400.0, first_cascade_far_bound: 25.0, ..default() }.build(),
+    ));
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(0.0, 4.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+        DistanceFog {
+            color: Color::srgba(0.80, 0.62, 0.47, 1.0),
+            directional_light_color: Color::srgba(1.0, 0.9, 0.7, 0.3),
+            directional_light_exponent: 20.0,
+            falloff: FogFalloff::Linear { start: 1200.0, end: 7000.0 },
+        },
+    ));
+    commands.spawn((
+        Hud,
+        Text::new(""),
+        TextFont { font_size: bevy::text::FontSize::Px(17.0), ..default() },
+        TextColor(Color::srgb(1.0, 0.96, 0.9)),
+        Node { position_type: PositionType::Absolute, top: Val::Px(12.0), left: Val::Px(14.0), ..default() },
+    ));
+}
+
+/// When the background load finishes: spawn terrain + buggy, aim the sun, place the camera.
+#[allow(clippy::too_many_arguments)]
+fn finish_load(
+    mut commands: Commands,
+    args: Res<Args>,
+    loading: Option<ResMut<Loading>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut light: Query<&mut Transform, (With<DirectionalLight>, Without<Camera3d>)>,
+    mut cam: Query<&mut Transform, (With<Camera3d>, Without<DirectionalLight>)>,
+) {
+    let Some(mut loading) = loading else { return };
+    let Some(result) = check_ready(&mut loading.task) else { return };
+    commands.remove_resource::<Loading>();
+    let loaded = match result {
+        Ok(l) => l,
+        Err(e) => {
+            error!("loading {} failed: {e}", loading.name);
+            commands.insert_resource(LoadFailed(e));
+            return;
+        }
+    };
+    let Loaded { mut site, step, tile_step_px, tiles } = loaded;
+    if let Some(s) = args.spawn {
+        match site.height(s.x, s.y) {
+            Some(h) => site.spawn = Vec3::new(s.x, h, s.y),
+            None => warn!("--spawn {},{} is not over valid data; using the automatic spawn", s.x, s.y),
+        }
+    }
+    info!("spawn at ({:.1}, {:.1}, {:.1}), textures: {}", site.spawn.x, site.spawn.y, site.spawn.z, site.texture_kind);
+    let render = terrain::spawn_terrain(&mut commands, tiles, step, tile_step_px, &mut meshes, &mut images, &mut materials);
+    commands.insert_resource(render);
+    let tuning = if args.realistic { Tuning::realistic() } else { Tuning::arcade() };
+    commands.insert_resource(Buggy::new(&site, site.spawn, -args.heading.to_radians(), tuning));
+
+    // light from the image's sun (so the ortho's baked shading agrees with ours, and the de-lit
+    // albedo gets re-lit the way it was photographed); keep it >= 20 deg up so lee sides stay readable
+    if let (Some((az, el)), Ok(mut t)) = (site.sun, light.single_mut()) {
+        let (az, el) = (az.to_radians(), el.max(20.0).to_radians());
+        let to_sun = Vec3::new(az.sin() * el.cos(), el.sin(), -az.cos() * el.cos());
+        *t = Transform::from_translation(to_sun).looking_at(Vec3::ZERO, Vec3::Y);
+        info!("sun from the image: azimuth {:.0} deg, elevation {:.0} deg (used {:.0})", az.to_degrees(), site.sun.unwrap().1, el.to_degrees());
+    }
+    if let Ok(mut c) = cam.single_mut() {
+        *c = Transform::from_translation(site.spawn + Vec3::new(0.0, 4.0, 10.0)).looking_at(site.spawn, Vec3::Y);
+    }
+    commands.insert_resource(site);
+}
+
+fn clock(time: Res<Time>, site: Option<Res<Site>>, mut clock: ResMut<RunClock>) {
+    if site.is_none() {
+        return;
+    }
+    let t = time.elapsed_secs();
+    let start = *clock.start.get_or_insert(t);
+    clock.now = t - start;
+}
+
+fn input(
+    keys: Res<ButtonInput<KeyCode>>,
+    args: Res<Args>,
+    clock: Res<RunClock>,
+    buggy: Option<Res<Buggy>>,
+    mut ctl: ResMut<Controls>,
+    mut cam: ResMut<CamMode>,
+    mut exit: MessageWriter<AppExit>,
+    mut flipped_since: Local<Option<f32>>,
+) {
+    let k = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
+    ctl.throttle = k(KeyCode::KeyW, KeyCode::ArrowUp) as i32 as f32 - k(KeyCode::KeyS, KeyCode::ArrowDown) as i32 as f32;
+    ctl.steer = k(KeyCode::KeyD, KeyCode::ArrowRight) as i32 as f32 - k(KeyCode::KeyA, KeyCode::ArrowLeft) as i32 as f32;
+    ctl.brake = keys.pressed(KeyCode::Space);
+    ctl.reset |= keys.just_pressed(KeyCode::KeyR);
+    if args.autodrive {
+        // full throttle with a slow, gentle weave; flip upright if stuck on the roof for 3 s
+        ctl.throttle = args.throttle;
+        ctl.steer = args.weave * (clock.now * 0.3).sin();
+        if let Some(b) = buggy {
+            if (b.rot * Vec3::Y).y < 0.3 {
+                let since = *flipped_since.get_or_insert(clock.now);
+                if clock.now - since > 3.0 {
+                    ctl.reset = true;
+                    *flipped_since = None;
+                }
+            } else {
+                *flipped_since = None;
+            }
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyC) {
+        (cam.dist, cam.height) = if cam.dist < 20.0 { (60.0, 25.0) } else { (9.0, 3.2) };
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        exit.write(AppExit::Success);
+    }
+}
+
+fn physics(site: Option<Res<Site>>, mut buggy: Option<ResMut<Buggy>>, mut ctl: ResMut<Controls>, time: Res<Time>) {
+    let (Some(site), Some(buggy)) = (site, buggy.as_mut()) else { return };
+    if ctl.reset {
+        buggy.reset(&site);
+        ctl.reset = false;
+    }
+    buggy.step(&site, &ctl, time.delta_secs());
+}
+
+fn fine_window(
+    mut commands: Commands,
+    site: Option<Res<Site>>,
+    buggy: Option<Res<Buggy>>,
+    render: Option<ResMut<TerrainRender>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut vis: Query<&mut Visibility>,
+) {
+    let (Some(site), Some(buggy), Some(mut render)) = (site, buggy, render) else { return };
+    terrain::update_fine_window(&mut commands, &site, &mut render, &mut meshes, &mut vis, buggy.pos);
+}
+
+fn chase_camera(buggy: Option<Res<Buggy>>, site: Option<Res<Site>>, cam_mode: Res<CamMode>, time: Res<Time>, mut cam: Query<&mut Transform, With<Camera3d>>) {
+    let (Some(buggy), Some(site), Ok(mut cam)) = (buggy, site, cam.single_mut()) else { return };
+    let f = buggy.forward();
+    let flat = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::NEG_Z);
+    let mut want = buggy.pos - flat * cam_mode.dist + Vec3::Y * cam_mode.height;
+    if let Some(g) = site.height(want.x, want.z) {
+        want.y = want.y.max(g + 1.0); // never inside a dune
+    }
+    let a = 1.0 - (-time.delta_secs() * 5.0).exp();
+    cam.translation = cam.translation.lerp(want, a);
+    cam.look_at(buggy.pos + Vec3::Y * 1.0, Vec3::Y);
+}
+
+fn hud(
+    buggy: Option<Res<Buggy>>,
+    site: Option<Res<Site>>,
+    loading: Option<Res<Loading>>,
+    failed: Option<Res<LoadFailed>>,
+    mut q: Query<&mut Text, With<Hud>>,
+) {
+    let Ok(mut text) = q.single_mut() else { return };
+    if let Some(f) = failed {
+        text.0 = format!("Could not load the site:\n{}", f.0);
+        return;
+    }
+    if let Some(l) = loading {
+        let p = l.progress.lock().map(|s| s.clone()).unwrap_or_default();
+        text.0 = format!("Loading {} ...\n{p}", l.name);
+        return;
+    }
+    let (Some(buggy), Some(site)) = (buggy, site) else { return };
+    let slope = site.normal(buggy.pos.x, buggy.pos.z).angle_between(Vec3::Y).to_degrees();
+    let respawn = if buggy.respawns > 0 { format!("   respawned: {}", buggy.last_respawn) } else { String::new() };
+    text.0 = format!(
+        "{}  ({:.2} N, {:.2} E)\n{}\n\n{:5.1} km/h   elevation {:.0} m   slope {:.0} deg   side {:.0} deg   {}  {}{}\n\nW/S throttle  A/D steer  Space brake  R reset  C camera  Esc quit\nHiRISE DTM: NASA/JPL/University of Arizona (CC0)",
+        site.name,
+        site.lat,
+        site.lon,
+        site.rationale,
+        buggy.vel.length() * 3.6,
+        buggy.pos.y as f64 + site.base_m,
+        slope,
+        buggy.side_slope,
+        if buggy.tuning.realistic { "[realistic sand]" } else { "[arcade]" },
+        if buggy.grounded == 0 { "AIRBORNE" } else { "" },
+        respawn,
+    );
+}
+
+/// --shot / --seconds / periodic physics log.
+#[allow(clippy::too_many_arguments)]
+fn test_hooks(
+    mut commands: Commands,
+    args: Res<Args>,
+    clock: Res<RunClock>,
+    buggy: Option<Res<Buggy>>,
+    site: Option<Res<Site>>,
+    render: Option<Res<TerrainRender>>,
+    failed: Option<Res<LoadFailed>>,
+    time: Res<Time<Real>>,
+    mut next_log: Local<f32>,
+    mut shot_taken: Local<bool>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if failed.is_some() && (args.shot.is_some() || args.seconds.is_some()) {
+        exit.write(AppExit::error());
+        return;
+    }
+    if site.is_none() {
+        return; // still loading
+    }
+    let t = clock.now;
+    if let (Some(b), Some(site)) = (&buggy, &site) {
+        if args.log_every > 0.0 && t >= *next_log {
+            *next_log = t + args.log_every;
+            let g = site.height(b.pos.x, b.pos.z);
+            let hag = g.map(|g| format!("{:.2}", b.pos.y - g)).unwrap_or_else(|| "nodata".into());
+            let r = render.as_ref();
+            info!(
+                "t={t:5.1} pos=({:.1},{:.1},{:.1}) speed={:.1}km/h wheels={} hag={hag} up_y={:.3} side={:.0} max_side_1s={:.0} rollovers={} respawns={} fine_chunks={} rebuilds={} build={:.1}ms swap={:.2}ms fps={:.0}",
+                b.pos.x,
+                b.pos.y,
+                b.pos.z,
+                b.vel.length() * 3.6,
+                b.grounded,
+                (b.rot * Vec3::Y).y,
+                b.side_slope,
+                b.max_sustained_side,
+                b.rollovers,
+                b.respawns,
+                r.map_or(0, |r| r.fine_chunks),
+                r.map_or(0, |r| r.rebuilds),
+                r.map_or(0.0, |r| r.build_ms),
+                r.map_or(0.0, |r| r.swap_ms),
+                1.0 / time.delta_secs().max(1e-4),
+            );
+        }
+    }
+    if let Some(path) = &args.shot {
+        if !*shot_taken && t >= args.shot_at {
+            *shot_taken = true;
+            let quit = args.seconds.is_none_or(|s| s <= args.shot_at);
+            let p = path.clone();
+            let mut e = commands.spawn(Screenshot::primary_window());
+            e.observe(save_to_disk(path.clone()));
+            e.observe(move |_: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
+                info!("screenshot saved to {}", p.display());
+                if quit {
+                    exit.write(AppExit::Success);
+                }
+            });
+        }
+    }
+    // hard deadline (also a safety net if a screenshot never arrives)
+    let deadline = match (args.seconds, args.shot.is_some()) {
+        (Some(s), false) => Some(s),
+        (Some(s), true) => Some(s.max(args.shot_at + 5.0)),
+        (None, true) => Some(args.shot_at + 10.0),
+        (None, false) => None,
+    };
+    if deadline.is_some_and(|d| t >= d) {
+        exit.write(AppExit::Success);
+    }
+}
