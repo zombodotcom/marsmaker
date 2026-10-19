@@ -3,6 +3,18 @@
 Turns NASA HiRISE stereo terrain models (DTMs, about 1 m per post) of Mars into real-scale
 game-engine terrain, and lets you drive a dune buggy on it.
 
+## Play in your browser
+
+**https://zombodotcom.github.io/marsmaker/** lets you pick a dune field and drive. Nothing to install. It works
+best on a desktop browser with a keyboard; phones get touch buttons.
+
+The page is built from `deploy/` and published to the `gh-pages` branch, which is rewritten
+as one orphan commit on every deploy. To update it: build the wasm (`viewer/WEB.md`), edit
+`deploy/sites.txt`, then run `python deploy/deploy.py`. The script packs the listed sites with
+`viewer/tools/web_pack.py`, makes thumbnails and `sites.json`, assembles
+`D:\marsmaker_data\pages_build\` and force-pushes it. Use `--no-push` to build only.
+`node deploy/smoke_live.mjs URL out.png` smoke-tests the live page in headless Chrome.
+
 ## Quick start
 
 ### 1. Drive the buggy

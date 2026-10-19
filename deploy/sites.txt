@@ -1,0 +1,34 @@
+# Sites published on GitHub Pages: folder name | card title | tag [| thumb=valid: crop the thumbnail by data coverage, not detail]
+# Folder names are converted sites under D:\marsmaker_data\sites. Order = order on the landing page.
+# Left out after QA (converter/check_seams.py + an align_check-style hillshade/texture correlation on the packed tiles):
+#   ESP_013017_1325 Kaiser dunes (ortho ~90 m off), ESP_017762_1890 Nili Patera (~24 m off), ESP_012241_1440 Hale (~16 m off),
+#   ESP_062652_2630 Chasma Boreale II (inconsistent offsets), ESP_013647_0975 Promethei Lingula (seam errors up to 157 codes),
+#   ESP_045318_2680 and ESP_019325_1960 (bland).
+PSP_007018_1255_PSP_007229_1255 | Russell Crater megadune | dunes
+PSP_003800_1325_PSP_004077_1325 | Proctor Crater dune field | dunes
+ESP_071577_2560_ESP_071630_2560 | Classic barchan dunes | dunes | thumb=valid
+ESP_017417_1655_ESP_016916_1655 | Herschel Crater dunes | dunes
+ESP_040770_1755_ESP_039280_1755 | Gale Crater dunes (Curiosity) | dunes
+ESP_036099_2615_ESP_036073_2615 | Olympia Undae sand sea | dunes
+ESP_054067_2630_ESP_054107_2630 | Chasma Boreale megadunes | dunes
+ESP_016907_1330_ESP_016973_1330 | Kaiser Crater dune gullies | dunes
+ESP_012340_1750_ESP_012195_1750 | Grand canyon of Gale Crater | canyon
+ESP_019190_1560_ESP_019335_1560 | Eberswalde delta | delta
+ESP_018701_1775_ESP_018846_1775 | Endeavour Crater rim (Opportunity) | crater
+ESP_012991_1335_ESP_013624_1335 | Fresh 3 km impact crater | crater
+ESP_013104_1895_ESP_012959_1895 | Athabasca Valles flood crater | flood
+ESP_016490_2315_ESP_016780_2315 | Pristine 9 km crater | crater
+ESP_016846_2320_ESP_016569_2320 | Pristine 12 km crater | crater
+ESP_016004_1425_PSP_006906_1425 | Gorgonum Chaos | chaos
+ESP_016183_1770_ESP_016816_1770 | Western Iani Chaos | chaos
+ESP_016750_1830_ESP_017172_1830 | Aram Chaos | chaos
+ESP_016467_2155_ESP_016533_2155 | Hrad Vallis mudflow | flow
+ESP_011952_1585_PSP_005821_1585 | Martin Crater central uplift | crater
+ESP_011635_1510_ESP_029542_1510 | Ritchey Crater uplift | crater
+ESP_016686_1735_ESP_017108_1735 | Candor Chasma chaos | canyon
+ESP_016058_1740_PSP_006894_1740 | Yardangs and sinuous ridges | wind
+ESP_016977_2165_ESP_017755_2165 | Heart-shaped pit, Acheron Catena | pit
+ESP_018870_2625_ESP_018910_2625 | North polar layered deposits | polar
+ESP_017413_2300_ESP_017334_2300 | Pristine 6 km crater | crater
+ESP_018046_2375_ESP_017822_2375 | Pristine 10 km crater | crater
+ESP_017173_1715_ESP_018518_1715 | Ganges Chasma mound | canyon

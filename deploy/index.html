@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarsMaker: drive on Mars</title>
+<meta name="description" content="Drive a dune buggy across real HiRISE Mars terrain in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23c1440e'/%3E%3Ccircle cx='22' cy='24' r='5' fill='%23a3380b'/%3E%3Ccircle cx='40' cy='40' r='7' fill='%23a3380b'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #160b07; --bg2: #24120b; --card: #2b170e; --card2: #3a1f12; --line: #5a3220;
+    --text: #f6e7d8; --muted: #c9a68c; --accent: #e8743b; --accent2: #ffb36b; --ok: #9fd18b;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; color: var(--text); background: var(--bg);
+    font: 16px/1.5 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background-image:
+      radial-gradient(1200px 600px at 80% -10%, #7a2e12 0%, transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, #4a1c0c 0%, transparent 60%),
+      linear-gradient(180deg, #1d0e08 0%, var(--bg) 600px);
+    background-repeat: no-repeat;
+    min-height: 100vh;
+  }
+  a { color: var(--accent2); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 44px 0 18px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .planet { width: 54px; height: 54px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 35% 30%, #ff9a5c, #c1440e 45%, #5e1d06 100%);
+    box-shadow: 0 0 40px #c1440e88, inset -8px -10px 18px #0006; }
+  h1 { margin: 0; font-size: clamp(30px, 6vw, 52px); letter-spacing: -0.02em; line-height: 1.05; }
+  h1 span { color: var(--accent); }
+  .tag { color: var(--muted); margin: 14px 0 0; max-width: 760px; font-size: clamp(15px, 2.2vw, 18px); }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 6px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px;
+    background: var(--accent); color: #1a0b05; font-weight: 700; text-decoration: none; border: 0; cursor: pointer;
+    font: inherit; font-weight: 700; }
+  .btn:hover { background: var(--accent2); }
+  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  .btn.ghost:hover { border-color: var(--accent); }
+
+  .panel { background: #2b170ecc; border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin: 18px 0; }
+  .opts { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+  .opts b { margin-right: 4px; }
+  .sw { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; color: var(--text); }
+  .sw input { appearance: none; -webkit-appearance: none; width: 38px; height: 22px; border-radius: 11px; background: #4a2a1a;
+    position: relative; margin: 0; cursor: pointer; transition: background .15s; flex: none; }
+  .sw input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--muted); transition: transform .15s, background .15s; }
+  .sw input:checked { background: var(--accent); }
+  .sw input:checked::after { transform: translateX(16px); background: #fff3e6; }
+  .sw small { color: var(--muted); }
+  .note { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; }
+  .chip { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted);
+    font: inherit; font-size: 14px; cursor: pointer; }
+  .chip.on { background: var(--card2); color: var(--text); border-color: var(--accent); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex;
+    flex-direction: column; transition: transform .12s, border-color .12s; }
+  .card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .thumb { position: relative; aspect-ratio: 4 / 3; background: #1a0d08; display: block; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .badge { position: absolute; top: 8px; left: 8px; background: #160b07cc; color: var(--accent2); font-size: 12px;
+    padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .06em; }
+  .badge.v3 { left: auto; right: 8px; color: var(--ok); }
+  .body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .body h3 { margin: 0; font-size: 18px; line-height: 1.25; }
+  .meta { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .why { color: #e0c3ad; font-size: 13px; margin: 0; flex: 1; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+  .size { color: var(--muted); font-size: 13px; }
+  .play { padding: 8px 16px; font-size: 15px; }
+  .soon { border-style: dashed; background: linear-gradient(160deg, #2b170e, #1d0f09); }
+  .soon .thumb { display: grid; place-items: center; font-size: 46px; color: var(--accent);
+    background: radial-gradient(circle at 50% 60%, #5e1d06 0%, #1a0d08 70%); }
+  .soon .thumb span { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; }
+
+  section h2 { font-size: 24px; margin: 34px 0 10px; }
+  .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 18px; }
+  .key { display: flex; gap: 10px; align-items: center; }
+  kbd { display: inline-block; min-width: 28px; text-align: center; padding: 2px 7px; border-radius: 6px; background: #3a1f12;
+    border: 1px solid var(--line); border-bottom-width: 3px; font: 600 13px/1.4 ui-monospace, Consolas, monospace; color: var(--text); }
+  footer { margin: 40px 0 0; padding: 24px 0 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  footer p { margin: 6px 0; }
+  @media (max-width: 520px) {
+    header { padding-top: 28px; }
+    .planet { width: 42px; height: 42px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><div class="planet" aria-hidden="true"></div>
+      <h1>Mars<span>Maker</span></h1></div>
+    <p class="tag">Drive a dune buggy at 1:1 scale across real Mars terrain, made from NASA HiRISE stereo
+      elevation models (1&nbsp;m per post, downsampled for the web). Pick a site and hit Play. It runs in your browser,
+      with nothing to install.</p>
+    <div class="hero-actions">
+      <a class="btn" id="quick" href="play.html">&#9654; Play Russell Crater</a>
+      <a class="btn ghost" href="#controls">Controls</a>
+      <a class="btn ghost" href="https://github.com/zombodotcom/marsmaker">Source on GitHub</a>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="opts">
+      <b>Options</b>
+      <label class="sw"><input type="checkbox" id="o-realistic"> Realistic sand <small>(less grip)</small></label>
+      <label class="sw"><input type="checkbox" id="o-albedo"> De-lit albedo <small>(where available)</small></label>
+      <label class="sw"><input type="checkbox" id="o-highcam"> Start in high camera</label>
+      <label class="sw"><input type="checkbox" id="o-autodrive"> Autodrive <small>(sit back and watch)</small></label>
+    </div>
+    <p class="note">Best on a desktop or laptop with a keyboard and a decent GPU. Phones get on-screen touch
+      buttons, but the terrain is heavy, so some phones will struggle. Each site downloads 5-30&nbsp;MB, plus about
+      40&nbsp;MB for the engine the first time.</p>
+  </div>
+
+  <div class="filters" id="filters"></div>
+  <div class="grid" id="grid"><p class="note">Loading sites...</p></div>
+
+  <section id="controls">
+    <h2>Controls</h2>
+    <div class="keys">
+      <div class="key"><kbd>W</kbd><kbd>&uarr;</kbd> throttle</div>
+      <div class="key"><kbd>S</kbd><kbd>&darr;</kbd> reverse</div>
+      <div class="key"><kbd>A</kbd><kbd>D</kbd><kbd>&larr;</kbd><kbd>&rarr;</kbd> steer</div>
+      <div class="key"><kbd>Space</kbd> brake</div>
+      <div class="key"><kbd>R</kbd> flip upright</div>
+      <div class="key"><kbd>C</kbd> chase / high camera</div>
+    </div>
+    <p class="note">Click the terrain once so it gets keyboard focus. The page freezes for a few seconds while a
+      site decodes, which is normal. You spawn in the most dune-rich part of each site. Black areas are gaps in
+      the NASA elevation model.</p>
+  </section>
+
+  <section>
+    <h2>Where this comes from</h2>
+    <p class="note" style="font-size:15px">Each site is a HiRISE Digital Terrain Model: a stereo pair from the Mars
+      Reconnaissance Orbiter turned into an elevation grid by the University of Arizona and USGS, with the matching
+      orthoimage draped on top. MarsMaker converts those into game-engine tiles (Unreal, Unity, Godot, Bevy). This
+      page runs the Bevy viewer compiled to WebAssembly on WebGL2.</p>
+  </section>
+
+  <footer>
+    <p>Imagery and elevation: <b>HiRISE, NASA/JPL/University of Arizona</b> (DTMs also USGS), public domain / CC0,
+      via the <a href="https://www.uahirise.org/dtm/">HiRISE DTM archive</a> and the
+      <a href="https://registry.opendata.aws/nasa-usgs-controlled-mro-ctx-dtms/">USGS Astrogeology analysis-ready data</a>.</p>
+    <p>Code: MIT license, <a href="https://github.com/zombodotcom/marsmaker">github.com/zombodotcom/marsmaker</a>.
+      Not affiliated with NASA.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const opts = ['realistic', 'albedo', 'highcam', 'autodrive'];
+  const flag = { realistic: 'realistic', albedo: 'albedo', highcam: 'high-cam', autodrive: 'autodrive' };
+  const box = {};
+  let store = {};
+  try { store = JSON.parse(localStorage.getItem('mm-opts') || '{}'); } catch (e) {}
+  for (const o of opts) {
+    box[o] = document.getElementById('o-' + o);
+    box[o].checked = !!store[o];
+    box[o].addEventListener('change', () => {
+      const s = {}; for (const k of opts) s[k] = box[k].checked;
+      try { localStorage.setItem('mm-opts', JSON.stringify(s)); } catch (e) {}
+      relink();
+    });
+  }
+  function href(site) {
+    const q = ['site=' + encodeURIComponent(site)];
+    for (const o of opts) if (box[o].checked) q.push(flag[o]);
+    return 'play.html?' + q.join('&');
+  }
+  function relink() {
+    document.querySelectorAll('[data-site]').forEach((a) => { a.href = href(a.dataset.site); });
+  }
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmtLat = (v) => Math.abs(v).toFixed(2) + '°' + (v < 0 ? 'S' : 'N');
+  const fmtLon = (v) => (((v % 360) + 360) % 360).toFixed(2) + '°E';
+
+  fetch('sites.json').then((r) => r.json()).then((data) => {
+    const sites = data.sites;
+    const grid = document.getElementById('grid');
+    const tags = ['all', ...new Set(sites.map((s) => s.tag))];
+    let cur = 'all';
+    const filters = document.getElementById('filters');
+    filters.innerHTML = tags.map((t) => `<button class="chip${t === 'all' ? ' on' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('');
+    filters.addEventListener('click', (e) => {
+      const t = e.target.dataset && e.target.dataset.tag; if (!t) return;
+      cur = t;
+      filters.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.dataset.tag === t));
+      grid.querySelectorAll('.card[data-tag]').forEach((c) => { c.style.display = (t === 'all' || c.dataset.tag === t) ? '' : 'none'; });
+    });
+    const cards = sites.map((s) => `
+      <article class="card" data-tag="${esc(s.tag)}">
+        <a class="thumb" data-site="${esc(s.site)}" href="play.html?site=${esc(s.site)}">
+          <img loading="lazy" src="thumbs/${esc(s.site)}.jpg" alt="${esc(s.title)}" width="480" height="360">
+          <span class="badge">${esc(s.tag)}</span>${s.albedo ? '<span class="badge v3" title="has de-lit albedo tiles">albedo</span>' : ''}
+        </a>
+        <div class="body">
+          <h3>${esc(s.title)}</h3>
+          <div class="meta"><span>${fmtLat(s.lat)} ${fmtLon(s.lon_east)}</span><span>${s.area_km2} km²</span><span>${s.relief_m} m relief</span></div>
+          <p class="why">${esc(s.rationale)}</p>
+          <div class="row"><span class="size">${s.size_mb} MB &middot; ${s.metres_per_post} m/post</span>
+            <a class="btn play" data-site="${esc(s.site)}" href="play.html?site=${esc(s.site)}">&#9654; Play</a></div>
+        </div>
+      </article>`);
+    cards.push(`
+      <article class="card soon">
+        <div class="thumb"><span>1,262</span></div>
+        <div class="body">
+          <h3>Any of 1,262 sites, live from NASA</h3>
+          <p class="why">Coming soon: pick any HiRISE DTM on Mars and stream it straight from the public NASA/USGS
+            archive into the buggy, no pre-packing needed.</p>
+          <div class="row"><span class="size">coming soon</span></div>
+        </div>
+      </article>`);
+    grid.innerHTML = cards.join('');
+    relink();
+  }).catch((e) => {
+    document.getElementById('grid').innerHTML = '<p class="note">Could not load the site list (' + esc(e) + ').</p>';
+  });
+  document.getElementById('quick').dataset.site = 'PSP_007018_1255_PSP_007229_1255';
+})();
+</script>
+</body>
+</html>
