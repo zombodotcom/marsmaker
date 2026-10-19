@@ -1,5 +1,8 @@
 """Residual texture/terrain misalignment on the most-valid tile of a site: cross-correlate a
-synthetic hillshade lit from several directions with the texture; report best shift in pixels."""
+synthetic hillshade lit from several directions with the texture; report best shift in pixels.
+
+Usage: python converter/align_check.py SITE_DIR [SITE_DIR ...]
+"""
 import json, os, sys
 import numpy as np
 from PIL import Image
@@ -30,6 +33,8 @@ def residual(site, maxs=60):
             best = (win[i, j], i - maxs, j - maxs, int(np.degrees(az)), win[maxs, maxs])
     return meta["id"], meta["texture"]["ortho_shift_applied_m"], best
 
+if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+    sys.exit(__doc__)
 for s in sys.argv[1:]:
     sid, sh, (peak, dr, dc, az, at0) = residual(s)
     print(f"{os.path.basename(s)} applied_shift={sh} residual_px(row,col)=({dr},{dc}) peak={peak:.3f} at0={at0:.3f} sun_az={az}")

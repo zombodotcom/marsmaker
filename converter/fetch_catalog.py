@@ -7,7 +7,7 @@ The new items' dtm/hillshade hrefs point at the prefix root (404), so every asse
 checked against the bucket listing and repaired to the copy inside the site folder.
 Ortho asset keys are normalised to "ortho_<name>" so batch_convert.pick_ortho finds them.
 
-Usage: python tools/list_bucket.py index.json && python tools/fetch_catalog.py index.json catalog.json
+Usage: python converter/list_bucket.py index.json && python converter/fetch_catalog.py index.json converter/catalog.json
 """
 import json, sys, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -61,6 +61,8 @@ def is_item(key, size):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
+        sys.exit(__doc__)
     index = json.load(open(sys.argv[1]))
     EXISTS.update(k for k, _ in index)
     keys = [k for k, s in index if is_item(k, s)]

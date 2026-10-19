@@ -7,7 +7,7 @@ real-scale terrain: one `MeshInstance3D` (ArrayMesh) per tile plus an optional `
 
 Coordinates: 1 unit = 1 m, +X = east, +Y = up, +Z = south (north = -Z). The origin is the site's local
 projection centre (`meta.json` "projection"). Heights are absolute Mars areoid heights unless
-*Relative heights* is on. These are the same axes `tools/export_glb.py` writes, so a GLB export and a
+*Relative heights* is on. These are the same axes `converter/export_glb.py` writes, so a GLB export and a
 runtime-loaded site line up exactly.
 
 ## Install

@@ -1,8 +1,8 @@
 """Live tile-matrix monitor for the batch converter.
 
-    python tools/monitor.py            # serves http://127.0.0.1:8765 and opens it
+    python dev/monitor.py            # serves http://127.0.0.1:8765 and opens it
 
-Reads D:\\marsmaker_data\\manifest.json (written by batch_convert.py) and catalog.json.
+Reads D:\\marsmaker_data\\manifest.json (written by batch_convert.py) and converter/catalog.json.
 Read-only: it never touches the pipeline's files.
 """
 import json, os, re, sys, threading, time, webbrowser
@@ -29,7 +29,7 @@ def site_name(key):
 
 
 CATALOG = []
-for item in json.load(open(os.path.join(ROOT, "catalog.json"))):
+for item in json.load(open(os.path.join(ROOT, "converter", "catalog.json"))):
     w, s, e, n = item["bbox"]
     r = re.search(r"rationale for creation was: (.*?)\. This DTM", item["description"])
     CATALOG.append({"site": site_name(item["key"]), "lat": (s + n) / 2, "lon": (w + e) / 2,
@@ -240,7 +240,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = unquote(self.path.split("?")[0])
         if p == "/":
-            return self.send(200, open(os.path.join(ROOT, "tools", "monitor.html"), "rb").read(), "text/html; charset=utf-8")
+            return self.send(200, open(os.path.join(ROOT, "dev", "monitor.html"), "rb").read(), "text/html; charset=utf-8")
         if p == "/catalog":
             return self.send(200, json.dumps(CATALOG).encode(), "application/json")
         if p == "/cams":

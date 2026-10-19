@@ -5,9 +5,9 @@ the first row of {k}_{r+1}_{c}, and the last column must equal the first column 
 Checks h_ (uint16 height), t_ (uint8 texture) and a_ (uint8 albedo) tiles.
 
 Usage:
-  python tools/check_seams.py D:\\marsmaker_data\\sites\\PSP_007018_1255_PSP_007229_1255 [more sites...]
-  python tools/check_seams.py --all [--data D:\\marsmaker_data]      # every site under <data>/sites
-  python tools/check_seams.py SITE -v                               # list every mismatching seam
+  python converter/check_seams.py D:\\marsmaker_data\\sites\\PSP_007018_1255_PSP_007229_1255 [more sites...]
+  python converter/check_seams.py --all [--data D:\\marsmaker_data]      # every site under <data>/sites
+  python converter/check_seams.py SITE -v                               # list every mismatching seam
 Exit code 1 if any mismatch is found.
 """
 import argparse, os, re, sys

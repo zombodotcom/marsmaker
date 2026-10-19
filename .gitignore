@@ -2,10 +2,12 @@
 viewer/target/
 __pycache__/
 *.pyc
-# large, regenerable with tools/list_bucket.py + tools/fetch_catalog.py
+# large, regenerable with converter/list_bucket.py + converter/fetch_catalog.py
 index.json
 stac_hirise.json
 catalog_981_backup.json
 # converted terrain lives on D:\marsmaker_data, never in the repo
 sites/
+# hirise2engine.py single-site output
+out/
 *.glb

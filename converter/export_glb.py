@@ -10,9 +10,9 @@ Each tile is a node translated to its north-west corner; its vertices are local 
 Heights are absolute Mars areoid heights in metres unless --relative is given (lowest point -> Y = 0).
 
 Examples:
-  python tools/export_glb.py PSP_007018_1255_PSP_007229_1255
-  python tools/export_glb.py PSP_007018_1255_PSP_007229_1255 --tile 2_1 --step 1
-  python tools/export_glb.py D:\\marsmaker_data\\sites\\X --step 8 --center --relative --albedo
+  python converter/export_glb.py PSP_007018_1255_PSP_007229_1255
+  python converter/export_glb.py PSP_007018_1255_PSP_007229_1255 --tile 2_1 --step 1
+  python converter/export_glb.py D:\\marsmaker_data\\sites\\X --step 8 --center --relative --albedo
 
 Only numpy + Pillow are needed. If trimesh is installed the written file is re-read as a check.
 """
@@ -25,7 +25,7 @@ import sys
 import numpy as np
 from PIL import Image
 
-DATA_ROOT = r"D:\marsmaker_data"
+DATA_ROOT = os.environ.get("MARS_DATA", r"D:\marsmaker_data")
 SITES_DIR = os.path.join(DATA_ROOT, "sites")
 OUT_DIR = os.path.join(DATA_ROOT, "glb")
 
@@ -342,8 +342,8 @@ def main():
         tag = ("_" + "-".join(f"{r}_{c}" for r, c in sorted(sel))) if sel else ""
         out = os.path.join(OUT_DIR, f"{site}{tag}_s{a.step}.glb")
     out = os.path.abspath(out)
-    if out[:2].upper() == "C:":
-        sys.exit("refusing to write to C: (shared system drive) - pick a path on D:")
+    if out[:2].upper() == "C:" and not os.environ.get("MARS_ALLOW_C"):
+        sys.exit("refusing to write to C: (shared system drive) - pick another drive, or set MARS_ALLOW_C=1")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     print(f"exporting {site} step {a.step} -> {out}")
     export(site_dir, out, a.step, sel, a.center, a.relative, not a.no_texture, a.albedo, not a.no_validate)

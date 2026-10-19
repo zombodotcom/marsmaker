@@ -1,0 +1,7 @@
+# converter/ (pip install -r converter/requirements.txt)
+numpy>=2.0
+rasterio>=1.4
+Pillow>=10.0
+scipy>=1.12
+psutil>=5.9      # --low-priority and the dev/ dashboards
+# optional: trimesh  (export_glb.py re-reads the written .glb as a self-check)

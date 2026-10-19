@@ -12,7 +12,7 @@ For every t_ (or --prefix a_) tile of a site it accumulates:
                      2-4 visible banding in flat areas, > 4 strong posterisation
 
 Usage:
-  python tools/texture_report.py D:\\marsmaker_data\\sites\\X [more sites] [--prefix a_] [--json out.json]
+  python converter/texture_report.py D:\\marsmaker_data\\sites\\X [more sites] [--prefix a_] [--json out.json]
 """
 import argparse, glob, json, os, re
 

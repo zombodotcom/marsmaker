@@ -1,4 +1,7 @@
-"""List every object under the USGS HiRISE DTM prefix (public, no AWS account)."""
+"""List every object under the USGS HiRISE DTM prefix (public, no AWS account).
+
+Usage: python converter/list_bucket.py index.json
+"""
 import json, sys, urllib.parse, urllib.request, xml.etree.ElementTree as ET
 
 BUCKET = "https://astrogeo-ard.s3.us-west-2.amazonaws.com/"
@@ -18,6 +21,8 @@ def list_all(prefix=PREFIX):
         token = t.text
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        sys.exit(__doc__)
     objs = list_all()
     json.dump(objs, open(sys.argv[1], "w"))
     print(len(objs), "objects", round(sum(s for _, s in objs) / 1e12, 3), "TB")

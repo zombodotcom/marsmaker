@@ -1,12 +1,22 @@
-"""Build the 'same 4 km of Mars at each satellite's resolution' layers for the web demo."""
-import json, os, sys
+"""Build the 'same 4 km of Mars at each satellite's resolution' layers for the web demo.
+
+Usage:
+  python converter/hirise2engine.py ESP_013017_1325 --lat -47.23 --lon 19.48 --size 2016 --res 1.0 --name kaiser
+  python converter/make_comparison.py out/kaiser out/web     # then open out/web/index.html via a local web server
+
+Writes <web>/layers.json, <web>/*_h16.png, <web>/texture.jpg and copies converter/comparison_demo.html
+to <web>/index.html (the page text is written for the Kaiser crop).
+"""
+import json, os, shutil, sys
 import numpy as np
 from PIL import Image
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hirise2engine import local_crs, warp_to_local
 
+if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
+    sys.exit(__doc__)
 site = sys.argv[1]                      # out/<site>
 web = sys.argv[2]                       # output dir for the web demo
 os.makedirs(web, exist_ok=True)
@@ -49,3 +59,5 @@ tex.save(os.path.join(web, "texture.jpg"), quality=85)
 json.dump({"size_m": (n - 1) * res, "center_lat": meta["center_lat"], "center_lon": meta["center_lon_east"],
            "unreal": meta["unreal"], "ortho_shift_applied_m": meta["ortho_shift_applied_m"],
            "layers": info}, open(os.path.join(web, "layers.json"), "w"), indent=1)
+shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "comparison_demo.html"),
+                os.path.join(web, "index.html"))

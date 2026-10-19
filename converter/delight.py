@@ -16,7 +16,7 @@ removed; cast shadows, atmospheric scattering and true photometric behaviour are
 t_* tiles are left untouched; meta.json gets an "albedo" block and a per-tile "albedo" file name.
 
 Usage:
-  python tools/delight.py D:\\marsmaker_data\\sites\\PSP_007018_1255_PSP_007229_1255 [--blend 0.8] [--low-priority]
+  python converter/delight.py D:\\marsmaker_data\\sites\\PSP_007018_1255_PSP_007229_1255 [--blend 0.8] [--low-priority]
 """
 import argparse, json, math, os, sys, time
 from datetime import datetime, timezone
@@ -24,8 +24,8 @@ from datetime import datetime, timezone
 import numpy as np
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+HERE = os.path.dirname(os.path.abspath(__file__))  # converter/, next to hirise2engine.py
+sys.path.insert(0, HERE)
 import hirise2engine as h2e  # noqa: E402
 
 TOOL_VERSION = 1
@@ -236,7 +236,7 @@ def delight_site(site, blend=None, label_cache=None, k_override=None, opts=None,
         "note": "APPROXIMATE de-lit ortho: DTM-scale sun shading divided out; not a photometric albedo. "
                 "Use a_ instead of t_ when the engine applies its own lighting. Same encoding/mapping as texture.",
         "tiles": "a_{row}_{col}.png (uint8 grey, 0 = nodata, encoded with texture.mapping)",
-        "tool": f"tools/delight.py v{TOOL_VERSION}", "created": _now(),
+        "tool": f"converter/delight.py v{TOOL_VERSION}", "created": _now(),
         "sun": sun,
         "method": "Lambert ratio R = cos(i_local)/cos(i_flat) from the DTM (Gaussian-smoothed sigma "
                   f"{o['smooth_px']} px); I ~ a + b R fitted over the site; k = b/(a+b); "

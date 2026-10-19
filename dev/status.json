@@ -1,0 +1,98 @@
+{
+ "updated": "16:40",
+ "now": "Round 2 done: no rollovers to 50 deg, no chunk hitch, browser build runs (0 console errors), Unity+Unreal importers written (untested in-engine).",
+ "checklist": [
+  {
+   "state": "done",
+   "text": "Recover the deleted code from old Claude Code session logs",
+   "note": "Heightmaps verified byte-for-byte against surviving output"
+  },
+  {
+   "state": "done",
+   "text": "Fix texture misalignment from the old run"
+  },
+  {
+   "state": "done",
+   "text": "Find the 281 missing HiRISE DTMs (catalog 981 -> 1,262)"
+  },
+  {
+   "state": "done",
+   "text": "Research prior and recent work (incl. unbaked.games)",
+   "note": "Nobody ships a full free game-ready set; unbaked.games was blocked by your local DNS, not dead"
+  },
+  {
+   "state": "done",
+   "text": "Verify data layers: HiRISE 1 m, CTX 20 m (44,628 DTMs), MOLA global"
+  },
+  {
+   "state": "done",
+   "text": "Blender add-on: built, tested, zipped",
+   "note": "plugins/blender/marsmaker_importer.zip"
+  },
+  {
+   "state": "done",
+   "text": "Stop the big batch to free the PC (134 sites saved)"
+  },
+  {
+   "state": "done",
+   "text": "Convert 7 great dune sites",
+   "note": "Gale/Curiosity, Russell megadune, Classic barchans, Chasma Boreale x2, Proctor, Olympia Undae (+ Kaiser, Herschel)"
+  },
+  {
+   "state": "done",
+   "text": "Mission control GUI (this page)",
+   "note": "python dev/mission.py"
+  },
+  {
+   "state": "done",
+   "text": "Bevy dune buggy viewer",
+   "note": "Full-res ground near buggy, dune spawn, --realistic sand, edge respawn"
+  },
+  {
+   "state": "done",
+   "text": "Fix texture banding + de-light photos (no double shading)",
+   "note": "Banding fixed; ortho scale bug fixed (~15 sites affected); de-light opt-in, approximate"
+  },
+  {
+   "state": "done",
+   "text": "Browser build of the viewer (WebAssembly)",
+   "note": "viewer/WEB.md; 40 MB wasm; tested headless Chrome only"
+  },
+  {
+   "state": "done",
+   "text": ".glb mesh export for any engine",
+   "note": "converter/export_glb.py"
+  },
+  {
+   "state": "done",
+   "text": "Godot plugin (testable here)",
+   "note": "plugins/godot; numbers match, collision within 0.4 mm"
+  },
+  {
+   "state": "doing",
+   "text": "Unity + Unreal plugins (you test elsewhere)",
+   "note": "Written + verified offline; you test in-engine"
+  },
+  {
+   "state": "todo",
+   "text": "CTX + MOLA layers to drive between HiRISE sites"
+  },
+  {
+   "state": "todo",
+   "text": "Low priority built into batch; full 1,262-site run overnight"
+  },
+  {
+   "state": "todo",
+   "text": "git + GitHub so it can't be lost again; free release"
+  },
+  {
+   "state": "todo",
+   "text": "Submit to unbaked.games as open source + agent environment"
+  },
+  {
+   "state": "blocked",
+   "text": "Delete D:\\marsmaker_restore_test and _test2",
+   "note": "You need to do this; my delete was blocked by a safety check"
+  }
+ ]
+}

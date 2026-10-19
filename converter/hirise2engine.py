@@ -4,7 +4,7 @@ The USGS COGs use a global equirectangular projection (standard parallel 0), so 
 pixel spacing is only correct at the equator. We reproject a crop into a local transverse
 Mercator grid centred on the site, which is metric and true-scale in both axes.
 
-Outputs (in out/<name>/):
+Outputs (in <repo>/out/<name>/):
   heightmap_16bit.png   Unreal Landscape heightmap (also fine for Godot Terrain3D)
   heightmap_16bit.r16   Unity Terrain RAW (little-endian, top-down)
   texture.png           Orthoimage draped to the same grid
@@ -12,7 +12,7 @@ Outputs (in out/<name>/):
   meta.json             Real-world location, metres-per-pixel, height range, engine scale values
 
 Usage:
-  python hirise2engine.py ESP_013017_1325 --lat -47.23 --lon 19.48 --size 2016 --res 1.0 --name kaiser
+  python converter/hirise2engine.py ESP_013017_1325 --lat -47.23 --lon 19.48 --size 2016 --res 1.0 --name kaiser
 """
 import argparse, json, math, os, sys
 import numpy as np
@@ -25,14 +25,14 @@ from rasterio.windows import from_bounds, transform as window_transform
 from PIL import Image
 
 MARS_R = 3396190.0
-CATALOG = os.path.join(os.path.dirname(__file__), "catalog.json")
+CATALOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalog.json")
 
 
 def find_item(obs_id):
     for item in json.load(open(CATALOG)):
         if obs_id in item["key"]:
             return item
-    sys.exit(f"{obs_id} not in catalog.json (run tools/fetch_catalog.py)")
+    sys.exit(f"{obs_id} not in catalog.json (run converter/fetch_catalog.py)")
 
 
 def local_crs(lat, lon):
@@ -308,7 +308,7 @@ def main():
 
     item = find_item(a.obs_id)
     name = a.name or a.obs_id
-    out = os.path.join(os.path.dirname(__file__), "out", name)
+    out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "out", name)  # <repo>/out/<name>
     os.makedirs(out, exist_ok=True)
 
     n = int(round(a.size / a.res)) + 1            # Unreal likes 2017, 4033, 8129 ...

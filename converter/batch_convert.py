@@ -21,20 +21,20 @@ Texture encoding (v3): uint8 grey, 0 = nodata; a gentle reversible tone mapping 
 (wide percentile window, gain capped at 4 grey levels per DN, mild gamma, +-0.5 DN deterministic
 dither only when the source has few levels). The exact mapping is in meta.json texture.mapping.
 Sun geometry of the ortho's observation (from the HiRISE RDR label) goes in meta.json "sun";
---albedo additionally writes approximate de-lit a_{row}_{col}.png tiles (see tools/delight.py).
+--albedo additionally writes approximate de-lit a_{row}_{col}.png tiles (see converter/delight.py).
 
 Usage:
-  python tools/batch_convert.py --filter dune
-  python tools/batch_convert.py --limit 2 --workers 2 --downloads 4
-  python tools/batch_convert.py --sites PSP_007018_1255_PSP_007229_1255 --workers 2 --albedo --low-priority
+  python converter/batch_convert.py --filter dune
+  python converter/batch_convert.py --limit 2 --workers 2 --downloads 4
+  python converter/batch_convert.py --sites PSP_007018_1255_PSP_007229_1255 --workers 2 --albedo --low-priority
 """
 import argparse, json, math, os, queue, re, shutil, sys, threading, time, traceback
 import urllib.request
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime, timezone
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+HERE = os.path.dirname(os.path.abspath(__file__))  # converter/: hirise2engine.py + catalog.json live here
+sys.path.insert(0, HERE)
 
 VERSION = 3                # bump when the output format changes -> everything is reprocessed
                            # 3: tone-mapped (not linear) textures, ortho northing-scale fix, "sun" block
@@ -540,7 +540,7 @@ def main():
     ap.add_argument("--data", default=r"D:\marsmaker_data", help="cache + manifest root")
     ap.add_argument("--out", default=None, help="output root (default <data>/sites)")
     ap.add_argument("--no-texture", action="store_true", help="skip orthoimage textures")
-    ap.add_argument("--catalog", default=os.path.join(ROOT, "catalog.json"))
+    ap.add_argument("--catalog", default=os.path.join(HERE, "catalog.json"))
     ap.add_argument("--sites", help="comma-separated site folder names (e.g. PSP_007018_1255_PSP_007229_1255)")
     ap.add_argument("--albedo", action="store_true", help="also write approximate de-lit a_*.png tiles")
     ap.add_argument("--force", action="store_true", help="reprocess matching sites even if up to date")
@@ -552,8 +552,8 @@ def main():
     data = os.path.abspath(a.data)
     out_root = os.path.abspath(a.out or os.path.join(data, "sites"))
     for p in (data, out_root):
-        if os.path.splitdrive(p)[0].upper() == "C:":
-            sys.exit(f"refusing to put bulk data on C: ({p})")
+        if os.path.splitdrive(p)[0].upper() == "C:" and not os.environ.get("MARS_ALLOW_C"):
+            sys.exit(f"refusing to put bulk data on C: ({p}); set MARS_ALLOW_C=1 if C: is your only drive")
     cache = os.path.join(data, "cache")
     os.makedirs(cache, exist_ok=True)
     label_cache = os.path.join(data, "labels")
