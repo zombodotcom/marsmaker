@@ -44,7 +44,7 @@ mode UI, which is reliable, and the script does the error-prone part (exact numb
    are stored raw, and the actor transform turns them into heights.
 4. **Run the script** in the Output Log (Cmd) or via *Tools > Execute Python Script*:
    ```
-   py "C:/Users/zombo/desktop/programming/marsmaker/plugins/unreal/marsmaker_unreal.py" "D:/marsmaker_data/unreal_prep/PSP_007018_1255_PSP_007229_1255/unreal_import.json"
+   py "<repo>/plugins/unreal/marsmaker_unreal.py" "D:/marsmaker_data/unreal_prep/PSP_007018_1255_PSP_007229_1255/unreal_import.json"
    ```
    `--dry-run` only reports changes. `--no-material` skips textures and materials. `--folder /Game/X`
    changes where assets go (default `/Game/MarsMaker/<site>`).

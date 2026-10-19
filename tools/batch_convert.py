@@ -200,6 +200,40 @@ def _align_scores(dtm, ortho, shifts, step=4.0):
     return out
 
 
+class _Seams:
+    """Edge values of already-written tiles on the tile-boundary lines of the site grid (rows/cols that
+    are multiples of STEP). apply() overwrites a tile's edges with known values (first writer wins,
+    NaN = nodata is a value too), record() stores the tile's edges where still unknown. Corners are
+    shared by a row line and a column line; since every tile applies before it records, both agree."""
+
+    def __init__(self, W, H):
+        self.W, self.H, self.rows, self.cols = W, H, {}, {}
+
+    def _edges(self, a, r0, c0):
+        n = a.shape[0]
+        return ((self.rows, r0, c0, self.W, a[0, :]), (self.rows, r0 + n - 1, c0, self.W, a[-1, :]),
+                (self.cols, c0, r0, self.H, a[:, 0]), (self.cols, c0 + n - 1, r0, self.H, a[:, -1]))
+
+    def apply(self, a, r0, c0):
+        import numpy as np
+        for store, line, off, _, edge in self._edges(a, r0, c0):
+            if line in store:
+                vals, known = store[line]
+                k = known[off:off + edge.size]
+                if k.any():
+                    edge[k] = vals[off:off + edge.size][k]
+
+    def record(self, a, r0, c0):
+        import numpy as np
+        for store, line, off, length, edge in self._edges(a, r0, c0):
+            if line not in store:
+                store[line] = (np.full(length, np.nan, "float32"), np.zeros(length, bool))
+            vals, known = store[line]
+            k = ~known[off:off + edge.size]
+            vals[off:off + edge.size][k] = edge[k]
+            known[off:off + edge.size] = True
+
+
 def convert_site(job):
     """Runs in a worker process. Never raises: returns a result dict."""
     t0 = time.time()
@@ -326,6 +360,11 @@ def convert_site(job):
             mapping = h2e.make_texture_mapping(h2e.sample_dn(tex_src, 4.0))
 
         # --- main pass: blocks of 1 tile row x CHUNK_TILES tiles
+        # Each block is warped on its own, and the warp result at a given post depends (at the float32
+        # rounding level, ~1e-4 m) on the block's window, so tiles from different blocks would disagree on
+        # their shared edge posts after quantisation. Seams carries every written tile's edge values so the
+        # neighbour in the next block reuses them: shared posts are bit-identical in h_ and t_ (and a_).
+        h_seams, t_seams = _Seams(W, H), _Seams(W, H)
         tiles, nvalid = [], 0
         for tr in range(ny):
             for tc0 in range(0, nx, CHUNK_TILES):
@@ -343,11 +382,17 @@ def convert_site(job):
                                            yscale=yscale)
                 for tc in tcs:
                     c = (tc - a) * STEP
-                    h = hb[:, c:c + TILE]
+                    h = hb[:, c:c + TILE]              # views: edits also reach the next tile of this block
+                    h_seams.apply(h, row0, tc * STEP)
+                    if tb is not None:
+                        t_seams.apply(tb[:, c:c + TILE], row0, tc * STEP)
                     fin = np.isfinite(h)
                     nv = int(fin.sum())
                     if nv == 0:
                         continue
+                    h_seams.record(h, row0, tc * STEP)
+                    if tb is not None:
+                        t_seams.record(tb[:, c:c + TILE], row0, tc * STEP)
                     q = np.zeros(h.shape, "<u2")
                     q[fin] = np.clip(np.rint((h[fin] - zmin) * k) + 1, 1, 65535).astype("<u2")
                     hname = f"h_{tr}_{tc}.png"

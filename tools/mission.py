@@ -111,7 +111,7 @@ def short(s, n=180):
 
 def session_label(path):
     proj = os.path.basename(os.path.dirname(path))
-    return proj.replace("C--Users-zombo-", "").replace("desktop-programming-", "").replace("Desktop-Programming-", "")[:28]
+    return proj.replace("C--Users-" + os.path.basename(os.path.expanduser("~")) + "-", "").replace("desktop-programming-", "").replace("Desktop-Programming-", "")[:28]
 
 
 def parse(line):
