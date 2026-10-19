@@ -58,7 +58,8 @@ def check_site(site, verbose=False):
                 n = int(d.sum())
                 if n:
                     nod = int((d & ((ea == 0) | (eb == 0))).sum())
-                    md = int(np.abs(ea[d].astype("int64") - eb[d].astype("int64")).max())
+                    dd = d & (ea != 0) & (eb != 0)          # data-vs-data differences only
+                    md = int(np.abs(ea[dd].astype("int64") - eb[dd].astype("int64")).max()) if dd.any() else 0
                     st["mismatch"] += n
                     st["nodata_mismatch"] += nod
                     st["max_diff"] = max(st["max_diff"], md)
@@ -91,13 +92,13 @@ def main():
         for k, st in res.items():
             total += st["mismatch"]
             parts.append(f"{k}_: {st['mismatch']} mismatched / {st['posts']} shared posts "
-                         f"({len(st['bad_seams'])}/{st['seams']} seams, max diff {st['max_diff']}"
+                         f"({len(st['bad_seams'])}/{st['seams']} seams, max data diff {st['max_diff']}"
                          f"{', nodata-vs-data ' + str(st['nodata_mismatch']) if st['nodata_mismatch'] else ''})")
         print(f"{os.path.basename(os.path.normpath(site))}: " + ("; ".join(parts) if parts else "no tiles"))
         if a.verbose:
             for k, st in res.items():
                 for ta, ns, tb, n, md, nod in st["bad_seams"]:
-                    print(f"    {ta} {ns}-> {tb}: {n} posts differ, max {md}" + (f", {nod} nodata" if nod else ""))
+                    print(f"    {ta} {ns}-> {tb}: {n} posts differ, max data diff {md}" + (f", {nod} nodata" if nod else ""))
     print(f"TOTAL mismatched shared posts: {total}")
     sys.exit(1 if total else 0)
 
