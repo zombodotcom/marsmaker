@@ -95,6 +95,26 @@ and exits 1 if anything logged an error. Headless WebGL runs on SwiftShader (CPU
 about 1 fps there. That's a property of the test environment, not of the build; a real GPU
 browser runs at normal speed.
 
+## Load / freeze probe
+
+```
+node tools/web_measure.mjs "http://127.0.0.1:8000/play.html?site=NAME" 45 [OUT.png]
+```
+
+Prints peak wasm memory, peak JS heap, the longest main-thread task and total blocked time.
+`MM_GPU=1` uses the real GPU (`--use-angle=d3d11`, what Chrome on Windows does) instead of
+SwiftShader; `MM_LINKS=1` lists every WebGL program link that blocked > 50 ms; `MM_PROFILE=1`
+prints a CPU profile (bind with names, without `--remove-name-section`, to read it).
+
+WebGL shader programs link synchronously, and through ANGLE/D3D11 the stock Bevy PBR shader
+took ~7 s per pipeline (6-7 pipelines: 35 s with the page and Chrome's GPU process frozen). The
+browser build therefore swaps in a trimmed `bevy_pbr/render/shadows.wesl` (src/shaders/web/: no
+point/spot shadow or PCSS paths), uses `ShadowFilteringMethod::Hardware2x2`, draws dust/tracks/
+flame with the unlit `fx.wesl` material, and avoids extra buggy pipeline variants (clearcoat,
+double-sided, meshes without UVs). Result on an RTX 2080 (Proctor, 38 tiles): links 35 s -> 4 s,
+longest freeze 28 s -> 3 s, time to drive 32 s -> 7 s. Re-check `MM_LINKS=1` after a Bevy upgrade
+(and refresh the copied shadows.wesl from the new bevy_pbr).
+
 ## Live mode: any of the 1,262 HiRISE DTMs, streamed from NASA
 
 `?live=<site id>` loads a DTM and its orthoimage straight from the public astrogeo-ard bucket

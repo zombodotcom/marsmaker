@@ -392,6 +392,13 @@ struct StartLoad;
 /// [menu] Start the background load of the site in `Args` and spawn the buggy (was in `setup`).
 fn begin_load(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     commands.remove_resource::<StartLoad>();
+    // browser: grow the wasm heap once before the first site instead of in hundreds of small
+    // memory.grow steps during the load (seconds of main-thread time in Chrome)
+    #[cfg(target_arch = "wasm32")]
+    {
+        static RESERVED: std::sync::Once = std::sync::Once::new();
+        RESERVED.call_once(|| drop(std::hint::black_box(Vec::<u8>::with_capacity(384 << 20))));
+    }
     let src = match &args.live {
         Some(id) => Source::live(id.clone(), args.live_index.clone()),
         None => Source::new(args.site.clone()),

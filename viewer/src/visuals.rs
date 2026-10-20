@@ -29,6 +29,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 const TERRAIN_SHADER: &str = "embedded://marsmaker_viewer/shaders/terrain.wesl";
 const SKY_SHADER: &str = "embedded://marsmaker_viewer/shaders/sky.wesl";
+const FX_SHADER: &str = "embedded://marsmaker_viewer/shaders/fx.wesl";
 const SKY_RADIUS: f32 = 45_000.0;
 const BASE_FOV_DEG: f32 = 50.0;
 
@@ -46,8 +47,11 @@ impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/terrain.wesl");
         embedded_asset!(app, "shaders/sky.wesl");
+        embedded_asset!(app, "shaders/fx.wesl");
+        #[cfg(target_arch = "wasm32")]
+        lite_web_shaders(app);
         let low = self.low;
-        app.add_plugins((MaterialPlugin::<TerrainMaterial>::default(), MaterialPlugin::<SkyMaterial>::default()))
+        app.add_plugins((MaterialPlugin::<TerrainMaterial>::default(), MaterialPlugin::<SkyMaterial>::default(), MaterialPlugin::<FxMaterial>::default()))
             .insert_resource(Quality { low })
             .insert_resource(ClearColor(Color::srgb(0.80, 0.62, 0.47)))
             .insert_resource(GlobalAmbientLight { color: Color::srgb(1.0, 0.80, 0.62), brightness: 900.0, ..default() })
@@ -62,7 +66,54 @@ impl Plugin for VisualsPlugin {
                     .before(TransformSystems::Propagate),
             );
         app.add_systems(Update, reset_on_unload); // [menu] map change
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(PostUpdate, web_uniform_uvs.before(TransformSystems::Propagate));
     }
+}
+
+/// Browser: swap bevy_pbr's shadow module for a trimmed copy (no point/spot light or PCSS
+/// soft-shadow paths, see shaders/web/shadows.wesl). Chrome on Windows links WebGL programs
+/// through ANGLE -> D3D11, synchronously, and with the stock module every lit pipeline took ~7 s,
+/// which froze the page (and Chrome's GPU process) for half a minute while a site loaded. Runs
+/// after DefaultPlugins queued the original, before the asset server's task reads it.
+#[cfg(target_arch = "wasm32")]
+fn lite_web_shaders(app: &mut App) {
+    app.world().resource::<bevy::asset::io::embedded::EmbeddedAssetRegistry>().insert_asset(
+        std::path::PathBuf::new(),
+        std::path::Path::new("bevy_pbr/render/shadows.wesl"),
+        include_bytes!("shaders/web/shadows.wesl").as_slice(),
+    );
+}
+
+/// Browser: give every StandardMaterial mesh a UV channel. Meshes with and without UVs need two
+/// separate pipelines (the buggy has both kinds), and each extra WebGL pipeline is seconds of
+/// synchronous shader linking. Untextured materials never read the zeros.
+#[cfg(target_arch = "wasm32")]
+fn web_uniform_uvs(q: Query<&Mesh3d, (Added<Mesh3d>, With<MeshMaterial3d<StandardMaterial>>)>, mut meshes: ResMut<Assets<Mesh>>) {
+    for m in &q {
+        if meshes.get(&m.0).is_some_and(|mesh| !mesh.contains_attribute(Mesh::ATTRIBUTE_UV_0))
+            && let Some(mut mesh) = meshes.get_mut(&m.0)
+        {
+            let n = mesh.count_vertices();
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0]; n]);
+        }
+    }
+}
+
+/// Unlit effect material (dust, tracks, flame): see shaders/fx.wesl.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct FxExt {}
+
+impl MaterialExtension for FxExt {
+    fn fragment_shader() -> ShaderRef {
+        FX_SHADER.into()
+    }
+}
+
+type FxMaterial = ExtendedMaterial<StandardMaterial, FxExt>;
+
+fn fx_mat(base: StandardMaterial) -> FxMaterial {
+    FxMaterial { base, extension: FxExt {} }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -91,6 +142,9 @@ pub fn spawn_camera(commands: &mut Commands, low: bool, transform: Transform) {
     } else {
         e.insert((Msaa::Sample4, Hdr, Bloom { intensity: 0.07, ..Bloom::NATURAL }, bevy::light::ShadowFilteringMethod::Gaussian));
     }
+    // browser: one hardware-filtered shadow tap instead of 13 (much faster WebGL program links)
+    #[cfg(target_arch = "wasm32")]
+    e.insert(bevy::light::ShadowFilteringMethod::Hardware2x2);
 }
 
 /// The sun (called from main's setup). Direction is set by main from the image metadata.
@@ -363,7 +417,7 @@ fn setup_fx(
     quality: Res<Quality>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut std_mats: ResMut<Assets<StandardMaterial>>,
+    mut fx_mats: ResMut<Assets<FxMaterial>>,
     mut sky_mats: ResMut<Assets<SkyMaterial>>,
 ) {
     let low = quality.low;
@@ -396,17 +450,17 @@ fn setup_fx(
     // dust particle pool
     let soft = images.add(soft_blob_image());
     let quad = meshes.add(Rectangle::new(1.0, 1.0));
-    let buckets: Vec<Handle<StandardMaterial>> = (0..DUST_BUCKETS)
+    let buckets: Vec<Handle<FxMaterial>> = (0..DUST_BUCKETS)
         .map(|k| {
             let a = (k as f32 + 0.5) / DUST_BUCKETS as f32;
-            std_mats.add(StandardMaterial {
+            fx_mats.add(fx_mat(StandardMaterial {
                 base_color: Color::srgba(0.80, 0.63, 0.48, a * 0.6),
                 base_color_texture: Some(soft.clone()),
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 cull_mode: None,
                 ..default()
-            })
+            }))
         })
         .collect();
     let n = if low { 150 } else { 600 };
@@ -420,7 +474,7 @@ fn setup_fx(
     commands.insert_resource(Dust { parts, buckets, next: 0, carry: [0.0; 4], since_on: [1.0; 4], rng: 0x1234_5678, was_air: false, min_vy: 0.0 });
 
     // tire tracks: one dynamic ribbon mesh per wheel
-    let track_mat = std_mats.add(StandardMaterial {
+    let track_mat = fx_mats.add(fx_mat(StandardMaterial {
         // multiply: a track always darkens whatever sand it's on (bright dust or dark dunes)
         base_color: Color::srgba(0.62, 0.52, 0.46, 0.5),
         base_color_texture: Some(images.add(tread_image())),
@@ -429,7 +483,7 @@ fn setup_fx(
         perceptual_roughness: 1.0,
         depth_bias: 50.0,
         ..default()
-    });
+    }));
     let mut list = Vec::new();
     for _ in 0..4 {
         let h = meshes.add(empty_mesh());
@@ -437,7 +491,15 @@ fn setup_fx(
         list.push(Track { mesh: h, pts: VecDeque::new(), dirty: false, broken: true, off_t: 0.0 });
     }
     commands.insert_resource(Tracks { list, max_pts: if low { 250 } else { 700 }, life: if low { 18.0 } else { 40.0 } });
+    commands.insert_resource(FlameMats([
+        fx_mats.add(fx_mat(StandardMaterial { base_color: Color::linear_rgba(2.4, 0.75, 0.12, 0.6), alpha_mode: AlphaMode::Add, unlit: true, ..default() })),
+        fx_mats.add(fx_mat(StandardMaterial { base_color: Color::linear_rgba(1.2, 1.5, 3.5, 0.7), alpha_mode: AlphaMode::Add, unlit: true, ..default() })),
+    ]));
 }
+
+/// Boost flame materials (outer cone, hot core); `flame` puts them on the cones spawn_buggy makes.
+#[derive(Resource)]
+struct FlameMats([Handle<FxMaterial>; 2]);
 
 fn empty_mesh() -> Mesh {
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
@@ -553,7 +615,7 @@ struct Particle {
 #[derive(Resource)]
 struct Dust {
     parts: Vec<Particle>,
-    buckets: Vec<Handle<StandardMaterial>>,
+    buckets: Vec<Handle<FxMaterial>>,
     next: usize,
     /// fractional particles owed per wheel
     carry: [f32; 4],
@@ -599,7 +661,7 @@ fn dust(
     quality: Res<Quality>,
     time: Res<Time>,
     cam: Query<&Transform, (With<Camera3d>, Without<Fx>)>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<Fx>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<FxMaterial>), With<Fx>>,
     mut fx: ResMut<CamFx>,
 ) {
     let (Some(b), Some(mut d), Ok(cam)) = (buggy, dust, cam.single()) else { return };
@@ -887,7 +949,10 @@ type Part = (Handle<Mesh>, Handle<StandardMaterial>, Transform);
 /// local axes +X right, +Y up, -Z forward. Ground is ~1.12 m below the origin at rest.
 pub fn spawn_buggy(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
     let m = |c: Color, rough: f32, metal: f32| StandardMaterial { base_color: c, perceptual_roughness: rough, metallic: metal, ..default() };
-    let paint = materials.add(StandardMaterial { clearcoat: 0.6, clearcoat_perceptual_roughness: 0.2, ..m(Color::srgb(0.86, 0.24, 0.03), 0.35, 0.0) });
+    // the browser skips clearcoat and the double-sided flag: each is a separate shader pipeline,
+    // and WebGL compiles every pipeline synchronously (seconds each)
+    let web = cfg!(target_arch = "wasm32");
+    let paint = materials.add(StandardMaterial { clearcoat: if web { 0.0 } else { 0.6 }, clearcoat_perceptual_roughness: 0.2, ..m(Color::srgb(0.86, 0.24, 0.03), 0.35, 0.0) });
     let cage = materials.add(m(Color::srgb(0.93, 0.93, 0.90), 0.32, 0.0));
     let steel = materials.add(m(Color::srgb(0.16, 0.16, 0.17), 0.5, 0.7));
     let chrome = materials.add(m(Color::srgb(0.85, 0.85, 0.87), 0.12, 1.0));
@@ -901,9 +966,8 @@ pub fn spawn_buggy(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials
     let spring = materials.add(m(Color::srgb(0.95, 0.80, 0.08), 0.35, 0.2));
     let glass = materials.add(StandardMaterial { base_color: Color::WHITE, emissive: LinearRgba::rgb(14.0, 13.0, 11.0), ..default() });
     let tail = materials.add(StandardMaterial { base_color: Color::srgb(0.5, 0.0, 0.0), emissive: LinearRgba::rgb(6.0, 0.15, 0.05), ..default() });
-    let flag = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.45, 0.05), emissive: LinearRgba::rgb(0.6, 0.15, 0.0), double_sided: true, cull_mode: None, ..default() });
-    let flame_outer = materials.add(StandardMaterial { base_color: Color::linear_rgba(2.4, 0.75, 0.12, 0.6), alpha_mode: AlphaMode::Add, unlit: true, ..default() });
-    let flame_core = materials.add(StandardMaterial { base_color: Color::linear_rgba(1.2, 1.5, 3.5, 0.7), alpha_mode: AlphaMode::Add, unlit: true, ..default() });
+    let flag_mat = StandardMaterial { base_color: Color::srgb(1.0, 0.45, 0.05), emissive: LinearRgba::rgb(0.6, 0.15, 0.0), ..default() };
+    let flag = materials.add(if web { flag_mat } else { StandardMaterial { double_sided: true, cull_mode: None, ..flag_mat } });
 
     let kit = Kit {
         cyl: meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(14)),
@@ -1039,8 +1103,8 @@ pub fn spawn_buggy(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials
         });
         // boost flames: outer cone + hot core, pointing back out of the exhaust tips
         for tip in &tips {
-            for (k, mat) in [(1.0, &flame_outer), (0.55, &flame_core)] {
-                c.spawn((Flame(k, *tip), Mesh3d(flame_cone.clone()), MeshMaterial3d(mat.clone()),
+            for k in [1.0, 0.55] {
+                c.spawn((Flame(k, *tip), Mesh3d(flame_cone.clone()),
                     Transform::from_translation(*tip), Visibility::Hidden, NotShadowCaster, NotShadowReceiver));
             }
         }
@@ -1149,13 +1213,20 @@ fn whip(buggy: Option<Res<Buggy>>, time: Res<Time>, mut q: Query<(&Whip, &mut Tr
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flame(
+    mut commands: Commands,
     buggy: Option<Res<Buggy>>,
     time: Res<Time>,
+    mats: Res<FlameMats>,
+    new: Query<(Entity, &Flame), Without<MeshMaterial3d<FxMaterial>>>,
     mut q: Query<(&Flame, &mut Transform, &mut Visibility)>,
     mut light: Query<&mut PointLight, With<FlameLight>>,
     mut level: Local<f32>,
 ) {
+    for (e, f) in &new {
+        commands.entity(e).insert(MeshMaterial3d(mats.0[if f.0 < 1.0 { 1 } else { 0 }].clone()));
+    }
     let Some(b) = buggy else { return };
     let dt = time.delta_secs().min(0.1);
     let target = if b.boosting { 1.0 } else { 0.0 };
