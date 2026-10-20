@@ -102,6 +102,7 @@ All use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for f
 | `--sand-region M` | REAL SAND: edge of the simulated square in metres (default 1024). |
 | `--sand-shots NAME@T,...` | REAL SAND test hook: at T s save NAME.png (screenshot), NAME_before/after/diff.png (hillshade of the simulated square before / now, and the height change; wind blows left to right) and log a `SAND DUMP` stats line. |
 | `--sand-log T` | REAL SAND log period (default 1 s). |
+| `--sand-reset T,...` | REAL SAND test hook: press K (back to the real DTM) at T s. `MM_SAND_RELAX=N` (env) caps the avalanche work per event (default 400). |
 | `--realistic` | same as `--mode real`. |
 | `--gravity-mult G` | multiply Mars gravity by G (default 1). |
 | `--albedo` | use the approximate de-lit `a_` tiles (converter v3) instead of the ortho `t_` tiles, where present. Lighting follows the image's sun (meta `sun`) either way. |
@@ -169,6 +170,76 @@ Example test run (about 20 s, below-normal priority is advisable on a shared PC)
 marsmaker-viewer --autodrive --seconds 20 --shot out.png --shot-at 10
 marsmaker-viewer --autodrive --seconds 20 --script jump@3,boost@3.5-6.5,upend@12,mode@16
 ```
+
+## REAL SAND (src/sand.rs, src/sand_sim.rs)
+
+REAL MARS tires on sand that behaves like sand. Everything it changes is a simulation, so as soon
+as anything differs from the DTM the HUD says **SIMULATED - not NASA data**; **K** (or switching
+map) puts the real DTM back.
+
+- **Moving dunes.** A Werner (1995, *Geology* 23, 1107) slab automaton runs on a 1024 m square
+  (512 x 512 cells of 2 m, `--sand-region`) around the buggy, on top of the (smoothed) DTM:
+  random sand cells not in a 15 deg wind shadow lose a 0.2 m slab, which hops 3 cells (6 m)
+  downwind and lands with probability 0.6 on sand, 0.4 on bare floor, 1 in a shadow zone;
+  after each move the neighbourhood avalanches to a 30 deg angle of repose (Mars ~32-34 deg,
+  30 is stabler). The grid is rotated into the wind, so hops and shadow scans run along rows.
+  Only sand above an estimated floor can move: a morphological opening of the DTM (200 m
+  window, removes dunes but keeps plains and slopes), blurred, +0.4 m. Sand blown out of the
+  downwind edge re-enters upwind in a random row; erosion and deposition fade out over the
+  outer 48 m, so the edge stays the DTM. The square re-centres when you drive near its edge
+  (changes are kept in a sparse per-post layer that `Site::at` adds to the DTM, so physics,
+  meshes and later squares all see them).
+- **Wind.** By default the slip faces decide: every 2 m post sloping 24-42 deg votes with its
+  downslope direction (lee faces face downwind). Barchans (ESP_071577_2560): toward 45 deg,
+  coherence 0.83 from 6,061 posts; Proctor: toward 20 deg, coherence 0.37 (complex dunes).
+  **,** / **.** turn it 15 deg, `--sand-wind DEG` sets it.
+- **Clock.** Calibrated to a saturated sand flux of 5 m^3 per m per Earth year (`--sand-flux`),
+  i.e. 4.7 slab picks per cell per Mars year; a dune of height H then moves ~flux/H. Observed:
+  ~0.1-1 m per Earth year and fluxes of a few to ~10-20 m^3/m/yr (Bridges et al. 2012, *Nature*
+  485, 339; Chojnacki et al. 2019, *Geology* 47, 427). **[** / **]** step the time-lapse:
+  paused, real time, 1 min/s, 1 hour/s, 1 sol/s, 10 and 100 sols/s, 1 Mars year/s
+  (`--sand-rate R` = R Mars years/s). The HUD shows the requested and achieved rate and the
+  simulated time. The sim stops while the pause menu is open.
+- **Budget.** Native: the automaton runs on a background task (up to ~60% of a frame, 6-40 ms)
+  and publishes its changes to the post layer (<= 4 ms); the main thread only rebuilds changed
+  terrain chunks (4 background tasks at a time, nearest first) and overlays, <= ~2.7 ms a frame.
+  Browser (no threads, no compute shaders): the same code inline, 2 ms sim + 1 ms publish +
+  2.5 ms meshes per frame.
+- **Tire tracks.** A 0.2 m "rut" layer (sparse 8 m patches) on top of the dune surface: each
+  wheel presses its footprint (the tire's round profile, so it agrees with the tread envelope)
+  to the sinkage depth and pushes 70% of that volume into side berms. Ruts persist and fade in
+  proportion to the simulated sand transport (each slab event per cell halves their relief).
+  Rut patches are drawn as their own fine meshes (with the terrain material); the full-res
+  terrain quads under them are left out, and the fine quads tile the terrain triangles exactly,
+  so there are no cracks.
+- **Soft sand.** Static sinkage 5 cm at the static wheel load in deep loose sand, scaling with
+  load, sand thickness (0 on bare floor) and slope (x1.8 near repose), less at speed (/2 at
+  30 km/h), more with wheelspin; a wheel spinning in place digs in at up to 5 cm/s (max 30 cm).
+  The drag is from the *fresh* sinkage just ahead of the tire (rolling in an existing rut is
+  easy): compaction crr = 0.5 sqrt(z / D) plus bulldozing past 12 cm, applied as a force from
+  the sand (outside the tire's friction budget). Grip drops up to 25% in fresh sand and 35% near
+  the angle of repose; wheels on near-repose slip faces set off local avalanches (the sand
+  under them fails at 27 deg). The HUD shows sinkage per wheel, the extra rolling resistance,
+  grip and sand depth, and **BOGGED DOWN** when you're stuck with the throttle down.
+
+Measured (`--sand-rate 1`, buggy parked with the brake, 66 s, this shared PC; `SAND DUMP` lines):
+
+| Site | Simulated | Dunes moved downwind | Cells changed > 5 cm | dh range | Net volume | NaN |
+| --- | --- | --- | --- | --- | --- | --- |
+| Barchans ESP_071577_2560 | 45 Mars yr | +14.1 m (0.31 m/Mars yr, 0.17 m/Earth yr) | 38% | -10.0 / +14.2 m | -0.1 m^3 | 0 |
+| Proctor PSP_003800_1325 | 25.5 Mars yr | +4.3 m (0.17 m/Mars yr) | 58% | -7.3 / +9.4 m | -1.4 m^3 | 0 |
+
+Migration is the shift that best aligns the before / after sand-thickness maps along the wind
+(cross-correlation). Barchans: the main barchan's lee face advances in an arc, its stoss side
+erodes, and a small dome upwind turns into a barchan with horns. Driving in REAL SAND on the
+barchans: 2-8 cm sinkage cruising, 13-16 cm spinning up from rest, crr +0.1-0.3, grip x0.6-0.8;
+on a 22-29 deg slip face full throttle slides back down (REAL MARS creeps and slides too);
+starting on a 13 deg soft slope it crawls at 2-4 km/h.
+
+Caveats: the floor estimate can't tell sand from narrow bedrock knobs; the slab automaton makes
+the dune surfaces rougher than real ones (0.2 m slabs on 2 m cells); 2 m cells under 1 m posts
+are interpolated; ripples, sand supply, seasonal winds, ice-cemented polar sand and dust are not
+modelled; one constant wind. Blowing-sand streamers are not done.
 
 ## Look (src/visuals.rs)
 

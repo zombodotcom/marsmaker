@@ -40,7 +40,6 @@ pub const BLOCK: usize = 16;
 const MAX_SHADOW: usize = 64;
 const MAX_HOPS: usize = 200;
 const SEG: usize = 8;
-const MAX_RELAX: usize = 96;
 /// the estimated floor is raised by this much (m): relief below it is DTM noise, not sand
 const FLOOR_SLACK: f32 = 0.4;
 
@@ -64,6 +63,8 @@ pub struct Params {
     pub flux: f32,
     /// cells at the region edge over which erosion / deposition fade out (fixed boundary)
     pub taper: usize,
+    /// avalanche work cap per event (cells visited); the rest relaxes on later events
+    pub max_relax: usize,
 }
 
 impl Params {
@@ -79,6 +80,7 @@ impl Params {
             tan_disturbed: 27f32.to_radians().tan(),
             flux,
             taper: 24,
+            max_relax: std::env::var("MM_SAND_RELAX").ok().and_then(|v| v.parse().ok()).unwrap_or(400),
         }
     }
     /// Werner picks per cell per simulated second for the requested flux (see the module doc).
@@ -403,7 +405,7 @@ impl Sim {
         let mut pops = 0;
         while let Some(c) = self.stack.pop() {
             pops += 1;
-            if pops > MAX_RELAX {
+            if pops > self.p.max_relax {
                 break;
             }
             let c = c as usize;
@@ -562,6 +564,27 @@ impl Sim {
         self.avalanche_moves += mv;
         stats.events += 1;
         self.events += 1;
+    }
+
+    /// (max slope deg, fraction of cells steeper than `deg`), over the interior
+    pub fn slope_stats(&self, deg: f32) -> (f32, f32) {
+        let n = self.reg.n;
+        let (mut mx, mut k, mut c) = (0.0f32, 0usize, 0usize);
+        let t = deg.to_radians().tan();
+        for b in 1..n - 1 {
+            for a in 1..n - 1 {
+                let i = b * n + a;
+                let gx = (self.h[i + 1] - self.h[i - 1]) / (2.0 * self.p.dx);
+                let gy = (self.h[i + n] - self.h[i - n]) / (2.0 * self.p.dx);
+                let g = (gx * gx + gy * gy).sqrt();
+                if g.is_finite() {
+                    mx = mx.max(g);
+                    c += 1;
+                    k += (g > t) as usize;
+                }
+            }
+        }
+        (mx.atan().to_degrees(), k as f32 / c.max(1) as f32)
     }
 
     /// Thickness of sand per cell (current), NaN where no data.

@@ -590,13 +590,13 @@ fn publish(sim: &mut Sim, shared: &SandShared, g: Geom, budget_ms: f32, stats: &
 
 type SimOut = (Box<Sim>, RunStats, Vec<(usize, usize)>);
 
-fn run_sim(mut sim: Box<Sim>, shared: Arc<SandShared>, g: Geom, picks: f64) -> SimOut {
+fn run_sim(mut sim: Box<Sim>, shared: Arc<SandShared>, g: Geom, picks: f64, budget_ms: f32) -> SimOut {
     let mut st = RunStats::default();
     let dist: Vec<Vec2> = std::mem::take(&mut *lock(&shared.disturb));
     for p in dist {
         st.disturb_moves += sim.disturb(p);
     }
-    sim.step(picks, SIM_BUDGET_MS, &mut st);
+    sim.step(picks, budget_ms, &mut st);
     let chunks = publish(&mut sim, &shared, g, PUBLISH_BUDGET_MS, &mut st);
     (sim, st, chunks)
 }
@@ -931,12 +931,15 @@ fn sand_sim(mut st: ResMut<SandState>, site: Option<Res<Site>>, buggy: Option<Re
     #[cfg(not(target_arch = "wasm32"))]
     {
         let sh = shared.clone();
-        st.task = Some(AsyncComputeTaskPool::get().spawn(async move { run_sim(sim, sh, g, picks) }));
+        // off the main thread: up to ~60% of the frame interval (at least SIM_BUDGET_MS), so the
+        // time-lapse speed doesn't collapse when the frame rate drops
+        let budget = (time.delta_secs() * 600.0).clamp(SIM_BUDGET_MS, 40.0);
+        st.task = Some(AsyncComputeTaskPool::get().spawn(async move { run_sim(sim, sh, g, picks, budget) }));
     }
     #[cfg(target_arch = "wasm32")]
     {
         let _ = AsyncComputeTaskPool::get;
-        let out = run_sim(sim, shared.clone(), g, picks);
+        let out = run_sim(sim, shared.clone(), g, picks, SIM_BUDGET_MS);
         absorb(&mut st, &shared, &mut rnd, out);
     }
 }
@@ -1387,6 +1390,10 @@ fn dump(st: &SandState, name: &str) {
     let t1 = sim.thickness();
     let (shift, c_best, c0) = sand_sim::migration_shift(&t0, &t1, n, m + 8, 40);
     let years = sim.sim_s / MARS_YEAR_S;
+    let h0sim = Sim::new(sim.reg.clone(), sim.p, 1);
+    let (s0max, s0f) = h0sim.slope_stats(35.0);
+    let (s1max, s1f) = sim.slope_stats(35.0);
+    info!("SAND DUMP {name}: slopes (2-cell central differences): before max {s0max:.0} deg, {:.2}% > 35 deg; now max {s1max:.0} deg, {:.2}% > 35 deg", s0f * 100.0, s1f * 100.0);
     let mig = shift * reg.dx;
     info!(
         "SAND DUMP {name}: region sim time {} ({:.2} Mars yr), events {}, cells changed >5cm {:.1}% ({changed}/{cnt}), mean |dh| {:.3} m, dh min {:.2} max {:.2} m, net volume {:+.1} m3 (should be ~0), NaN {nan}; migration downwind {:+.2} m ({:+.2} m/Mars yr, {:+.2} m/Earth yr) by cross-correlation (r={:.4} vs {:.4} unshifted)",
