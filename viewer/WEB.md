@@ -69,11 +69,12 @@ python -m http.server 8765 --bind 127.0.0.1
 Then open:
 
 - `http://127.0.0.1:8765/` loads the default site (Russell).
-- `http://127.0.0.1:8765/?site=PSP_003800_1325_PSP_004077_1325&albedo&realistic`
+- `http://127.0.0.1:8765/?site=PSP_003800_1325_PSP_004077_1325&albedo&mode=real`
 - `http://127.0.0.1:8765/?autodrive&weave=0.2&throttle=0.7`
 
 Every native flag works as a query key without the `--`. Flags that take a value use `key=value`;
-switches are bare (`albedo`, `realistic`, `autodrive`, `high-cam`). Examples: `spawn=200,-4444`,
+switches are bare (`albedo`, `realistic`, `autodrive`, `high-cam`). Examples: `mode=real`
+(or `mode=fun`, the default), `gravity-mult=0.5`, `spawn=200,-4444`,
 `heading=90`, `step=2`, `log-every=1`. `site=` is a folder name under `sites/`, or any URL
 containing `/`. Click the canvas first so it gets keyboard focus. The physics log appears in the
 browser console. `shot`/`seconds` are meant for native runs.

@@ -1,13 +1,14 @@
 //! MarsMaker viewer: drive a dune buggy on real HiRISE terrain at 1:1 scale.
 //!
-//!   marsmaker-viewer [SITE_DIR] [--step N] [--spawn X,Z] [--heading DEG] [--realistic] [--albedo]
+//!   marsmaker-viewer [SITE_DIR] [--step N] [--spawn X,Z] [--heading DEG] [--mode real|fun] [--realistic] [--albedo]
 //!                    [--autodrive] [--weave A] [--throttle T] [--seconds N] [--shot OUT.png] [--shot-at T]
-//!                    [--log-every T] [--high-cam]
+//!                    [--log-every T] [--high-cam] [--gravity-mult G] [--script jump@3,boost@4-6,mode@8]
 //!
 //! In the browser the same flags come from the URL query, e.g. `?site=NAME&autodrive&albedo`
 //! (see WEB.md). SITE_DIR is a converted site folder (with meta.json); default is the Russell
 //! Crater megadune. Controls: W/S or arrows = throttle/reverse, A/D = steer, Space = brake,
-//! R = flip upright, C = toggle chase / high camera, Esc = quit. See README.md for the flags.
+//! R = flip upright, M = REAL / FUN mode, C = toggle chase / high camera, Esc = quit; FUN mode adds
+//! Shift = boost, Ctrl/J = jump, W/S/A/D = pitch/roll in the air. See README.md for the flags.
 
 mod buggy;
 mod terrain;
@@ -17,7 +18,7 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
-use buggy::{Buggy, Controls, Tuning};
+use buggy::{Buggy, Controls, Mode, Script, Tuning};
 use std::path::PathBuf;
 use terrain::{Loaded, LoadOptions, Progress, Site, Source, TerrainRender};
 
@@ -31,7 +32,9 @@ struct Args {
     step: Option<usize>,
     spawn: Option<Vec2>,
     heading: f32,
-    realistic: bool,
+    mode: Mode,
+    gravity_mult: f32,
+    script: Option<Script>,
     albedo: bool,
     autodrive: bool,
     weave: f32,
@@ -50,7 +53,9 @@ impl Args {
             step: None,
             spawn: None,
             heading: 0.0,
-            realistic: false,
+            mode: Mode::Fun,
+            gravity_mult: 1.0,
+            script: None,
             albedo: false,
             autodrive: false,
             weave: 0.35,
@@ -75,7 +80,13 @@ impl Args {
                     a.spawn = Some(Vec2::new(p[0], p[1]));
                 }
                 "--heading" => a.heading = num(it.next(), "--heading"),
-                "--realistic" => a.realistic = true,
+                "--realistic" => a.mode = Mode::Real,
+                "--mode" => {
+                    let v = it.next().expect("--mode needs real or fun");
+                    a.mode = Mode::parse(&v).unwrap_or_else(|| panic!("--mode {v}: use real or fun"));
+                }
+                "--gravity-mult" => a.gravity_mult = num(it.next(), "--gravity-mult"),
+                "--script" => a.script = Some(Script::parse(&it.next().expect("--script needs a list"))),
                 "--albedo" => a.albedo = true,
                 "--autodrive" => a.autodrive = true,
                 "--high-cam" => a.high_cam = true,
@@ -259,7 +270,7 @@ fn finish_load(
     info!("spawn at ({:.1}, {:.1}, {:.1}), textures: {}", site.spawn.x, site.spawn.y, site.spawn.z, site.texture_kind);
     let render = terrain::spawn_terrain(&mut commands, tiles, step, tile_step_px, &mut meshes, &mut images, &mut materials);
     commands.insert_resource(render);
-    let tuning = if args.realistic { Tuning::realistic() } else { Tuning::arcade() };
+    let tuning = Tuning::new(args.mode, args.gravity_mult);
     commands.insert_resource(Buggy::new(&site, site.spawn, -args.heading.to_radians(), tuning));
 
     // light from the image's sun (so the ortho's baked shading agrees with ours, and the de-lit
@@ -294,12 +305,16 @@ fn input(
     mut cam: ResMut<CamMode>,
     mut exit: MessageWriter<AppExit>,
     mut flipped_since: Local<Option<f32>>,
+    mut script_t: Local<f32>,
 ) {
     let k = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
     ctl.throttle = k(KeyCode::KeyW, KeyCode::ArrowUp) as i32 as f32 - k(KeyCode::KeyS, KeyCode::ArrowDown) as i32 as f32;
     ctl.steer = k(KeyCode::KeyD, KeyCode::ArrowRight) as i32 as f32 - k(KeyCode::KeyA, KeyCode::ArrowLeft) as i32 as f32;
     ctl.brake = keys.pressed(KeyCode::Space);
     ctl.reset |= keys.just_pressed(KeyCode::KeyR);
+    ctl.boost = k(KeyCode::ShiftLeft, KeyCode::ShiftRight);
+    ctl.jump |= keys.any_just_pressed([KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::KeyJ]);
+    ctl.toggle_mode |= keys.just_pressed(KeyCode::KeyM);
     if args.autodrive {
         // full throttle with a slow, gentle weave; flip upright if stuck on the roof for 3 s
         ctl.throttle = args.throttle;
@@ -316,6 +331,10 @@ fn input(
             }
         }
     }
+    if let (Some(s), true) = (&args.script, clock.start.is_some()) {
+        s.apply(*script_t, clock.now, &mut ctl);
+        *script_t = clock.now;
+    }
     if keys.just_pressed(KeyCode::KeyC) {
         (cam.dist, cam.height) = if cam.dist < 20.0 { (60.0, 25.0) } else { (9.0, 3.2) };
     }
@@ -330,7 +349,17 @@ fn physics(site: Option<Res<Site>>, mut buggy: Option<ResMut<Buggy>>, mut ctl: R
         buggy.reset(&site);
         ctl.reset = false;
     }
+    if ctl.toggle_mode {
+        let m = buggy.tuning.mode.other();
+        buggy.set_mode(m);
+        ctl.toggle_mode = false;
+    }
+    if ctl.upend {
+        buggy.upend(&site);
+        ctl.upend = false;
+    }
     buggy.step(&site, &ctl, time.delta_secs());
+    ctl.jump = false;
 }
 
 fn fine_window(
@@ -379,7 +408,7 @@ fn hud(
     let slope = site.normal(buggy.pos.x, buggy.pos.z).angle_between(Vec3::Y).to_degrees();
     let respawn = if buggy.respawns > 0 { format!("   respawned: {}", buggy.last_respawn) } else { String::new() };
     text.0 = format!(
-        "{}  ({:.2} N, {:.2} E)\n{}\n\n{:5.1} km/h   elevation {:.0} m   slope {:.0} deg   side {:.0} deg   {}  {}{}\n\nW/S throttle  A/D steer  Space brake  R reset  C camera  Esc quit\nHiRISE DTM: NASA/JPL/University of Arizona (CC0)",
+        "{}  ({:.2} N, {:.2} E)\n{}\n\n{:5.1} km/h   elevation {:.0} m   slope {:.0} deg   side {:.0} deg   {}{}\n{}\n\n{}\nHiRISE DTM: NASA/JPL/University of Arizona (CC0)",
         site.name,
         site.lat,
         site.lon,
@@ -388,9 +417,10 @@ fn hud(
         buggy.pos.y as f64 + site.base_m,
         slope,
         buggy.side_slope,
-        if buggy.tuning.realistic { "[realistic sand]" } else { "[arcade]" },
-        if buggy.grounded == 0 { "AIRBORNE" } else { "" },
+        if buggy.airborne() { "AIRBORNE" } else { "" },
         respawn,
+        buggy.hud_status(),
+        buggy.hud_help(),
     );
 }
 
@@ -424,7 +454,7 @@ fn test_hooks(
             let hag = g.map(|g| format!("{:.2}", b.pos.y - g)).unwrap_or_else(|| "nodata".into());
             let r = render.as_ref();
             info!(
-                "t={t:5.1} pos=({:.1},{:.1},{:.1}) speed={:.1}km/h wheels={} hag={hag} up_y={:.3} side={:.0} max_side_1s={:.0} rollovers={} respawns={} fine_chunks={} rebuilds={} build={:.1}ms swap={:.2}ms fps={:.0}",
+                "t={t:5.1} pos=({:.1},{:.1},{:.1}) speed={:.1}km/h wheels={} hag={hag} up_y={:.3} side={:.0} max_side_1s={:.0} rollovers={} respawns={} fine_chunks={} rebuilds={} build={:.1}ms swap={:.2}ms fps={:.0} {}",
                 b.pos.x,
                 b.pos.y,
                 b.pos.z,
@@ -440,6 +470,7 @@ fn test_hooks(
                 r.map_or(0.0, |r| r.build_ms),
                 r.map_or(0.0, |r| r.swap_ms),
                 1.0 / time.delta_secs().max(1e-4),
+                b.log_extra(),
             );
         }
     }

@@ -23,8 +23,6 @@ const REST: f32 = 0.55; // suspension rest length
 const TRAVEL: f32 = 0.45; // max compression before the bump stop
 const K: f32 = 9000.0; // spring N/m
 const C: f32 = 1300.0; // damper N/(m/s)
-const ENGINE: f32 = 2600.0; // N at the wheels, all-wheel drive
-const VMAX: f32 = 26.0; // m/s where engine force tapers to zero (~94 km/h)
 const BRAKE: f32 = 3500.0;
 const STEER_MAX: f32 = 0.55;
 const SUBSTEPS: usize = 4;
@@ -34,35 +32,190 @@ const OFF_DATA_GRACE: f32 = 0.4;
 const SAFE_EVERY: f32 = 0.25;
 const SAFE_KEEP: usize = 40;
 
-/// Tire / ground model.
+// --- JUST FOR FUN extras (ignored in REAL mode) ---
+/// boost: rocket-style thrust along the chassis nose, tapering to zero at BOOST_VMAX
+const BOOST_FORCE: f32 = 2800.0;
+const BOOST_VMAX: f32 = 55.0;
+const BOOST_SECS: f32 = 3.0; // a full meter lasts this long
+const BOOST_RECHARGE_SECS: f32 = 5.0; // empty -> full
+const BOOST_RECHARGE_DELAY: f32 = 0.6; // after letting go
+/// jump: velocity kick (m/s). Under Mars gravity 6 m/s is ~4.8 m high and ~3.2 s of air.
+const JUMP_V: f32 = 6.0;
+const JUMP_COOLDOWN: f32 = 0.6;
+const JUMP_COYOTE: f32 = 0.15; // may still jump this long after the wheels left the ground
+/// air control: target pitch / roll rates (rad/s) and how fast they're reached (1/s)
+const AIR_PITCH_RATE: f32 = 3.0;
+const AIR_ROLL_RATE: f32 = 3.5;
+const AIR_GAIN: f32 = 4.0;
+const AIR_CONTROL_AFTER: f32 = 0.12; // s airborne before air control engages (not on every bump)
+/// soft landings: self-righting toward the ground normal (angular accel per unit sin(tilt)),
+/// strong for LAND_WINDOW s after touching down, gentle otherwise. Not applied beyond
+/// LAND_EXTREME (chassis up . ground normal), i.e. a roof / side landing still tips over.
+const RIGHT_LANDING: f32 = 20.0;
+const RIGHT_DRIVING: f32 = 4.0;
+const LAND_WINDOW: f32 = 0.7;
+const LAND_EXTREME: f32 = 0.25;
+/// auto-flip upright after this long on the roof / side
+const AUTO_FLIP_SECS: f32 = 1.5;
+/// airborne longer than this counts as a jump in the stunt stats
+const STUNT_MIN_AIR: f32 = 0.35;
+
+/// The two driving modes. Toggle in game with M, or `--mode real|fun` (`?mode=` in the browser).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Mode {
+    /// Mars as it is: loose-sand tires, a light sand rail's power (~60 km/h), no assists.
+    Real,
+    /// Ignores realism where that's more fun: grip, power, boost, jump, air control, auto-flip.
+    #[default]
+    Fun,
+}
+
+impl Mode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "real" | "realistic" => Some(Mode::Real),
+            "fun" | "arcade" => Some(Mode::Fun),
+            _ => None,
+        }
+    }
+    pub fn other(self) -> Self {
+        match self {
+            Mode::Real => Mode::Fun,
+            Mode::Fun => Mode::Real,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Real => "REAL MARS",
+            Mode::Fun => "JUST FOR FUN",
+        }
+    }
+    pub fn short(self) -> &'static str {
+        match self {
+            Mode::Real => "real",
+            Mode::Fun => "fun",
+        }
+    }
+}
+
+/// Tire / ground / engine model per mode.
 ///
-/// * `arcade` (default): grippy and forgiving. A constant friction circle with mu 0.75, stiff
-///   cornering and light rolling drag, so you can fling the buggy over dune crests.
-/// * `realistic` (`--realistic`): loose dry sand. A friction *ellipse*: longitudinal peak mu 0.48
-///   (tire-on-loose-dry-sand traction is typically ~0.4-0.6) and lateral 0.58, since a tire
-///   pushed sideways bulldozes a sand berm that resists the slide. Once the demanded force
-///   exceeds the ellipse (wheelspin / sliding), grip falls off with the overload, up to 30% less
-///   at 2x, like a tire digging a rut instead of rolling. Rolling resistance adds a
+/// * REAL (`--mode real`, `--realistic`): loose dry sand. A friction *ellipse*: longitudinal
+///   peak mu 0.48 (tire-on-loose-dry-sand traction is typically ~0.4-0.6) and lateral 0.58,
+///   since a tire pushed sideways bulldozes a sand berm that resists the slide. Once the demanded
+///   force exceeds the ellipse (wheelspin / sliding), grip falls off with the overload, up to 30%
+///   less at 2x, like a tire digging a rut instead of rolling. Rolling resistance adds a
 ///   load-proportional term (Crr 0.12, soft-sand sinkage) and cornering stiffness is lower, so
 ///   the buggy understeers, climbs noticeably slower, and slides down side slopes beyond ~28 deg
-///   (or earlier under heavy throttle, when the drive force uses up the grip).
+///   (or earlier under heavy throttle, when the drive force uses up the grip). 2600 N at the
+///   wheels against that drag gives a light sand rail's ~60 km/h on the flat. No assists.
+/// * FUN (default): a grippy friction circle (mu 1.1), stiff cornering, 4200 N and light drag
+///   (~117 km/h on the flat, ~140 with boost), plus boost, jump, air control, soft landings and
+///   auto-flip (see the constants above).
+///
+/// Gravity is Mars' 3.711 m/s^2 in both, times `--gravity-mult`.
 #[derive(Clone, Copy)]
 pub struct Tuning {
-    pub realistic: bool,
+    pub mode: Mode,
+    pub gravity_mult: f32,
     mu: f32,     // longitudinal peak friction coefficient
     mu_lat: f32, // lateral peak friction coefficient
     corner: f32,       // lateral tire stiffness N/(m/s), whole car
     roll_visc: f32,    // N/(m/s) per wheel
     roll_crr: f32,     // load-proportional rolling resistance coefficient
     slip_falloff: f32, // fraction of grip lost at full slip
+    engine: f32,       // N at the wheels, all-wheel drive
+    vmax: f32,         // m/s where engine force tapers to zero
 }
 
 impl Tuning {
-    pub fn arcade() -> Self {
-        Self { realistic: false, mu: 0.75, mu_lat: 0.75, corner: 7000.0, roll_visc: 12.0, roll_crr: 0.0, slip_falloff: 0.0 }
+    pub fn new(mode: Mode, gravity_mult: f32) -> Self {
+        let gravity_mult = if gravity_mult.is_finite() && gravity_mult > 0.0 { gravity_mult } else { 1.0 };
+        match mode {
+            Mode::Real => Self {
+                mode,
+                gravity_mult,
+                mu: 0.48,
+                mu_lat: 0.58,
+                corner: 4500.0,
+                roll_visc: 12.0,
+                roll_crr: 0.12,
+                slip_falloff: 0.3,
+                engine: 2600.0,
+                vmax: 26.0,
+            },
+            Mode::Fun => Self {
+                mode,
+                gravity_mult,
+                mu: 1.1,
+                mu_lat: 1.1,
+                corner: 9000.0,
+                roll_visc: 6.0,
+                roll_crr: 0.0,
+                slip_falloff: 0.0,
+                engine: 4200.0,
+                vmax: 40.0,
+            },
+        }
     }
-    pub fn realistic() -> Self {
-        Self { realistic: true, mu: 0.48, mu_lat: 0.58, corner: 4500.0, roll_visc: 12.0, roll_crr: 0.12, slip_falloff: 0.3 }
+    pub fn fun(&self) -> bool {
+        self.mode == Mode::Fun
+    }
+    pub fn gravity(&self) -> f32 {
+        MARS_G * self.gravity_mult
+    }
+}
+
+/// Scripted input for tests: `--script jump@3,boost@4-6,mode@8`. Each item is `NAME@T` (a
+/// one-shot press at T s) or `NAME@T0-T1` (held from T0 to T1). Held items override the keyboard
+/// and `--autodrive`. Names: `jump`, `mode`, `reset`, `upend` (turn the buggy onto its roof, to
+/// test auto-flip) as presses; `boost`, `fwd`, `back`, `coast` (throttle 0), `left`, `right`,
+/// `straight`, `brake` as holds.
+#[derive(Clone, Default, Debug)]
+pub struct Script(Vec<(String, f32, Option<f32>)>);
+
+impl Script {
+    pub fn parse(s: &str) -> Self {
+        let mut v = Vec::new();
+        for item in s.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let (name, when) = item.split_once('@').unwrap_or_else(|| panic!("--script item {item:?} needs NAME@T"));
+            let num = |t: &str| t.trim().parse::<f32>().unwrap_or_else(|_| panic!("--script item {item:?}: bad time"));
+            let (t0, t1) = match when.split_once('-') {
+                Some((a, b)) => (num(a), Some(num(b))),
+                None => (num(when), None),
+            };
+            let name = name.trim().to_ascii_lowercase();
+            const NAMES: [&str; 12] = ["jump", "mode", "reset", "upend", "boost", "fwd", "back", "coast", "left", "right", "straight", "brake"];
+            assert!(NAMES.contains(&name.as_str()), "--script: unknown item {name:?} (one of {NAMES:?})");
+            v.push((name, t0, t1));
+        }
+        Script(v)
+    }
+
+    /// Apply the script for the frame covering (prev, now] seconds.
+    pub fn apply(&self, prev: f32, now: f32, ctl: &mut Controls) {
+        for (name, t0, t1) in &self.0 {
+            let fire = prev < *t0 && now >= *t0;
+            let held = match t1 {
+                Some(t1) => now >= *t0 && now <= *t1,
+                None => false,
+            };
+            match name.as_str() {
+                "jump" if fire => ctl.jump = true,
+                "mode" if fire => ctl.toggle_mode = true,
+                "reset" if fire => ctl.reset = true,
+                "upend" if fire => ctl.upend = true,
+                "boost" if held || fire => ctl.boost = true,
+                "fwd" if held => ctl.throttle = 1.0,
+                "back" if held => ctl.throttle = -1.0,
+                "coast" if held => ctl.throttle = 0.0,
+                "left" if held => ctl.steer = -1.0,
+                "right" if held => ctl.steer = 1.0,
+                "straight" if held => ctl.steer = 0.0,
+                "brake" if held => ctl.brake = true,
+                _ => {}
+            }
+        }
     }
 }
 
@@ -79,6 +232,21 @@ pub struct Controls {
     pub steer: f32,    // -1 (left) .. 1 (right)
     pub brake: bool,
     pub reset: bool,
+    /// FUN mode: held boost
+    pub boost: bool,
+    /// latched presses, cleared by the physics step
+    pub jump: bool,
+    pub toggle_mode: bool,
+    /// test hook: turn the buggy onto its roof
+    pub upend: bool,
+}
+
+/// Stunt stats of one jump: airtime (s), max height of the chassis above the ground (m), flips.
+#[derive(Clone, Copy, Default)]
+pub struct Jump {
+    pub air: f32,
+    pub height: f32,
+    pub flips: u32,
 }
 
 #[derive(Resource)]
@@ -107,6 +275,36 @@ pub struct Buggy {
     /// times the buggy went past 80 deg of roll/pitch (up.y < 0.17)
     pub rollovers: u32,
     rolled: bool,
+    /// wheel or chassis touched the ground in the last step
+    touching: bool,
+    body_contact: bool,
+    since_touch: f32,
+    // --- FUN mode state (stats are tracked in both modes) ---
+    /// boost meter 0..1
+    pub boost: f32,
+    pub boosting: bool,
+    boost_idle: f32,
+    jump_cd: f32,
+    pub jumps: u32,
+    /// current airborne time / max height / integrated pitch and roll (rad) of the current jump
+    pub air_t: f32,
+    air_h: f32,
+    air_pitch: f32,
+    air_roll: f32,
+    /// throttle / steer key direction at takeoff, and whether each has since been released or
+    /// changed (air control needs a fresh press, so holding W over a crest doesn't flip you)
+    air_held: [i8; 2],
+    air_armed: [bool; 2],
+    land_t: f32,
+    pub last_jump: Option<Jump>,
+    pub best: Jump,
+    /// total flips landed
+    pub flips: u32,
+    upside_t: f32,
+    pub autoflips: u32,
+    /// on-screen message and how long it stays
+    pub msg: String,
+    pub msg_t: f32,
 }
 
 impl Buggy {
@@ -131,6 +329,28 @@ impl Buggy {
             max_sustained_side: 0.0,
             rollovers: 0,
             rolled: false,
+            touching: false,
+            body_contact: false,
+            since_touch: 0.0,
+            boost: 1.0,
+            boosting: false,
+            boost_idle: 0.0,
+            jump_cd: 0.0,
+            jumps: 0,
+            air_t: 0.0,
+            air_h: 0.0,
+            air_pitch: 0.0,
+            air_roll: 0.0,
+            air_held: [0; 2],
+            air_armed: [false; 2],
+            land_t: 0.0,
+            last_jump: None,
+            best: Jump::default(),
+            flips: 0,
+            upside_t: 0.0,
+            autoflips: 0,
+            msg: String::new(),
+            msg_t: 0.0,
         };
         b.place(site, at, heading);
         b
@@ -149,6 +369,110 @@ impl Buggy {
         self.wheel_len = [REST; 4];
         self.grounded = 0;
         self.off_data = 0.0;
+        // a teleport isn't a jump
+        self.air_t = 0.0;
+        self.air_h = 0.0;
+        self.air_pitch = 0.0;
+        self.air_roll = 0.0;
+        self.land_t = 0.0;
+        self.upside_t = 0.0;
+        self.since_touch = 0.0;
+    }
+
+    fn say(&mut self, msg: impl Into<String>, secs: f32) {
+        self.msg = msg.into();
+        self.msg_t = secs;
+    }
+
+    /// M key: switch mode live (keeps position and velocity).
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.tuning = Tuning::new(mode, self.tuning.gravity_mult);
+        self.boosting = false;
+        let hint = match mode {
+            Mode::Real => "loose sand, real power, no assists",
+            Mode::Fun => "Shift boost, Ctrl/J jump, air control",
+        };
+        self.say(format!("{} MODE  ({hint})", mode.label()), 2.5);
+        info!("MODE -> {} at ({:.1}, {:.1}, {:.1}) speed {:.1} km/h", mode.label(), self.pos.x, self.pos.y, self.pos.z, self.vel.length() * 3.6);
+    }
+
+    /// Test hook: turn the buggy onto its roof where it is.
+    pub fn upend(&mut self, site: &Site) {
+        let g = site.height(self.pos.x, self.pos.z).unwrap_or(self.pos.y);
+        self.rot = Quat::from_rotation_y(self.yaw()) * Quat::from_rotation_z(std::f32::consts::PI);
+        self.pos = Vec3::new(self.pos.x, g + 1.2, self.pos.z);
+        self.vel = Vec3::ZERO;
+        self.ang = Vec3::ZERO;
+        info!("UPEND (test hook) at ({:.1}, {:.1}, {:.1})", self.pos.x, self.pos.y, self.pos.z);
+    }
+
+    /// True while neither wheels nor chassis touch the ground.
+    pub fn airborne(&self) -> bool {
+        !self.touching
+    }
+
+    /// Flips in the current jump so far: full turns of pitch plus full turns of roll (30 deg
+    /// short of a turn still counts).
+    fn air_flips(&self) -> u32 {
+        let n = |a: f32| ((a.abs() + 0.5) / std::f32::consts::TAU).floor() as u32;
+        n(self.air_pitch) + n(self.air_roll)
+    }
+
+    /// Mode tag + status line for the HUD (stunt stats in FUN mode).
+    pub fn hud_status(&self) -> String {
+        let mut s = format!("[{}]", self.tuning.mode.label());
+        if self.tuning.gravity_mult != 1.0 {
+            s += &format!(" g x{:.2}", self.tuning.gravity_mult);
+        }
+        if self.tuning.fun() {
+            let n = (self.boost * 10.0).round() as usize;
+            s += &format!(
+                "\nBOOST [{}{}]{}",
+                "#".repeat(n),
+                "-".repeat(10 - n.min(10)),
+                if self.boosting { " >>>" } else { "" }
+            );
+            if self.air_t > STUNT_MIN_AIR {
+                s += &format!("   AIR {:.1} s   height {:.1} m   flips {}", self.air_t, self.air_h, self.air_flips());
+            } else if let Some(j) = self.last_jump {
+                s += &format!("   last jump: {:.1} s, {:.1} m, {} flips", j.air, j.height, j.flips);
+            }
+            s += &format!(
+                "\nbest air {:.1} s   best height {:.1} m   total flips {}   jumps {}",
+                self.best.air, self.best.height, self.flips, self.jumps
+            );
+        }
+        if self.msg_t > 0.0 {
+            s += &format!("\n\n>>> {} <<<", self.msg);
+        }
+        s
+    }
+
+    /// Control help line for the HUD, per mode.
+    pub fn hud_help(&self) -> &'static str {
+        match self.tuning.mode {
+            Mode::Real => "W/S throttle  A/D steer  Space brake  R flip upright  M fun mode  C camera  Esc quit",
+            Mode::Fun => {
+                "W/S throttle  A/D steer  Space brake  Shift boost  Ctrl/J jump  air: W/S pitch A/D roll  R flip  M real  C cam  Esc"
+            }
+        }
+    }
+
+    /// Extra fields for the periodic physics log.
+    pub fn log_extra(&self) -> String {
+        format!(
+            "mode={} g={:.3} boost={:.2}{} air={:.1}s jumps={} flips={} best_air={:.1}s best_h={:.1}m autoflips={}",
+            self.tuning.mode.short(),
+            self.tuning.gravity(),
+            self.boost,
+            if self.boosting { "(on)" } else { "" },
+            self.air_t,
+            self.jumps,
+            self.flips,
+            self.best.air,
+            self.best.height,
+            self.autoflips
+        )
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -191,11 +515,127 @@ impl Buggy {
         let h = dt / SUBSTEPS as f32;
         let target_steer = ctl.steer * STEER_MAX / (1.0 + self.vel.length() * 0.06);
         self.steer += (target_steer - self.steer) * (dt * 6.0).min(1.0);
+        self.msg_t = (self.msg_t - dt).max(0.0);
+        let fun = self.tuning.fun();
+
+        // boost meter
+        self.boosting = fun && ctl.boost && self.boost > 0.0;
+        if self.boosting {
+            self.boost = (self.boost - dt / BOOST_SECS).max(0.0);
+            self.boost_idle = 0.0;
+        } else {
+            self.boost_idle += dt;
+            if self.boost_idle > BOOST_RECHARGE_DELAY {
+                self.boost = (self.boost + dt / BOOST_RECHARGE_SECS).min(1.0);
+            }
+        }
+        // jump: needs (recent) ground contact
+        self.jump_cd -= dt;
+        if fun && ctl.jump && self.jump_cd <= 0.0 && self.since_touch <= JUMP_COYOTE {
+            let up = self.rot * Vec3::Y;
+            let dir = (up + Vec3::Y).normalize_or(Vec3::Y);
+            self.vel += dir * JUMP_V;
+            self.jump_cd = JUMP_COOLDOWN;
+            self.jumps += 1;
+            info!("JUMP #{} at ({:.1}, {:.1}, {:.1}) speed {:.1} km/h", self.jumps, self.pos.x, self.pos.y, self.pos.z, self.vel.length() * 3.6);
+        }
+
+        let dir = |v: f32| if v > 0.05 { 1i8 } else if v < -0.05 { -1 } else { 0 };
+        let keys = [dir(ctl.throttle), dir(ctl.steer)];
+        for i in 0..2 {
+            if self.touching {
+                self.air_held[i] = keys[i];
+                self.air_armed[i] = false;
+            } else if keys[i] != self.air_held[i] {
+                self.air_armed[i] = true;
+            }
+        }
+        self.touching = false;
         for _ in 0..SUBSTEPS {
             self.substep(site, ctl, h);
+            self.touching |= self.grounded > 0 || self.body_contact;
         }
         self.check_bounds(site, dt);
         self.track_slope(site, dt);
+        self.track_stunts(site, dt);
+        if fun {
+            self.auto_flip(site, dt);
+        } else {
+            self.upside_t = 0.0;
+        }
+    }
+
+    /// Airtime / height / flips. A jump starts when nothing touches the ground and is counted
+    /// on landing if it lasted more than STUNT_MIN_AIR.
+    fn track_stunts(&mut self, site: &Site, dt: f32) {
+        if !self.touching {
+            self.since_touch += dt;
+            self.air_t += dt;
+            if let Some(g) = site.height(self.pos.x, self.pos.z) {
+                // CoM height minus its ride height ~ how far the chassis is off the ground
+                self.air_h = self.air_h.max(self.pos.y - g - 0.67);
+            }
+            let wl = self.rot.inverse() * self.ang;
+            self.air_pitch += wl.x * dt;
+            self.air_roll += wl.z * dt;
+            return;
+        }
+        self.since_touch = 0.0;
+        if self.air_t > STUNT_MIN_AIR {
+            let up = self.rot * Vec3::Y;
+            let on_wheels = up.dot(site.normal_at(self.pos.x, self.pos.z, 2.0)) > LAND_EXTREME;
+            // a flip only counts if you land it
+            let flips = if on_wheels { self.air_flips() } else { 0 };
+            let j = Jump { air: self.air_t, height: self.air_h.max(0.0), flips };
+            self.flips += j.flips;
+            self.best.air = self.best.air.max(j.air);
+            self.best.height = self.best.height.max(j.height);
+            self.best.flips = self.best.flips.max(j.flips);
+            self.last_jump = Some(j);
+            let up_y = up.y;
+            info!(
+                "LANDED {} airtime {:.2} s, max height {:.1} m, flips {} (pitch {:.0} deg, roll {:.0} deg), up_y {:.2}, speed {:.1} km/h",
+                if on_wheels { "on the wheels" } else { "on the roof/side" },
+                j.air,
+                j.height,
+                j.flips,
+                self.air_pitch.to_degrees(),
+                self.air_roll.to_degrees(),
+                up_y,
+                self.vel.length() * 3.6
+            );
+            if self.tuning.fun() {
+                self.land_t = LAND_WINDOW;
+                if !on_wheels {
+                    self.say("CRASH!", 1.5);
+                } else if j.flips > 0 {
+                    self.say(format!("{} FLIP{}!", j.flips, if j.flips > 1 { "S" } else { "" }), 2.0);
+                } else if j.air > 2.0 {
+                    self.say(format!("BIG AIR {:.1} s", j.air), 2.0);
+                }
+            }
+        }
+        self.air_t = 0.0;
+        self.air_h = 0.0;
+        self.air_pitch = 0.0;
+        self.air_roll = 0.0;
+        self.land_t = (self.land_t - dt).max(0.0);
+    }
+
+    /// FUN mode: on the roof or side, nearly stopped, for AUTO_FLIP_SECS -> flip upright.
+    fn auto_flip(&mut self, site: &Site, dt: f32) {
+        let up_y = (self.rot * Vec3::Y).y;
+        if up_y < 0.3 && self.touching && self.vel.length() < 4.0 {
+            self.upside_t += dt;
+            if self.upside_t > AUTO_FLIP_SECS {
+                self.reset(site);
+                self.autoflips += 1;
+                self.say("AUTO-FLIP", 1.5);
+                info!("AUTO-FLIP #{} at ({:.1}, {:.1}, {:.1})", self.autoflips, self.pos.x, self.pos.y, self.pos.z);
+            }
+        } else {
+            self.upside_t = 0.0;
+        }
     }
 
     fn track_slope(&mut self, site: &Site, dt: f32) {
@@ -260,17 +700,56 @@ impl Buggy {
         }
     }
 
+    /// FUN mode only. Airborne: W/S pitch and A/D roll steer the spin toward a target rate (no
+    /// input keeps the current spin, so flips carry on). Touching: a righting push toward the
+    /// ground normal, strong just after a landing (which also soaks up the tumble), gentle while
+    /// driving; none past LAND_EXTREME, so a roof landing still ends on the roof (auto-flip).
+    fn fun_assists(&mut self, site: &Site, ctl: &Controls, up: Vec3, h: f32) {
+        if self.grounded == 0 && !self.body_contact {
+            if self.air_t < AIR_CONTROL_AFTER {
+                return;
+            }
+            let mut wl = self.rot.inverse() * self.ang;
+            let g = (AIR_GAIN * h).min(1.0);
+            if self.air_armed[0] && ctl.throttle != 0.0 {
+                wl.x += (-ctl.throttle * AIR_PITCH_RATE - wl.x) * g; // W = nose down
+            }
+            if self.air_armed[1] && ctl.steer != 0.0 {
+                wl.z += (-ctl.steer * AIR_ROLL_RATE - wl.z) * g; // D = roll right
+            }
+            self.ang = self.rot * wl;
+            return;
+        }
+        let n = site.normal_at(self.pos.x, self.pos.z, 2.0);
+        if up.dot(n) < LAND_EXTREME {
+            return;
+        }
+        let landing = self.land_t > 0.0;
+        self.ang += up.cross(n) * if landing { RIGHT_LANDING } else { RIGHT_DRIVING } * h;
+        if landing {
+            let yaw = n * self.ang.dot(n);
+            self.ang = yaw + (self.ang - yaw) * (1.0 - 6.0 * h);
+        }
+    }
+
     fn substep(&mut self, site: &Site, ctl: &Controls, h: f32) {
         let up = self.rot * Vec3::Y;
-        let mut force = Vec3::NEG_Y * MARS_G * MASS;
+        let tu = self.tuning;
+        let mut force = Vec3::NEG_Y * tu.gravity() * MASS;
         let mut torque = Vec3::ZERO;
         let p0 = self.pos;
         let apply = |f: Vec3, at: Vec3, force: &mut Vec3, torque: &mut Vec3| {
             *force += f;
             *torque += (at - p0).cross(f);
         };
-        let tu = self.tuning;
+        if self.boosting {
+            // rocket-ish: along the nose, through the CoM, works in the air too
+            let fwd = self.forward();
+            let taper = (1.0 - self.vel.dot(fwd) / BOOST_VMAX).clamp(0.0, 1.0);
+            force += fwd * BOOST_FORCE * taper;
+        }
         self.grounded = 0;
+        self.body_contact = false;
 
         // pass 1: ray-cast every wheel (needed up front for the anti-roll bars)
         struct Hit {
@@ -317,8 +796,8 @@ impl Buggy {
             let mut f_long = if ctl.brake {
                 -v_long.clamp(-1.0, 1.0) * BRAKE / 4.0
             } else {
-                let taper = (1.0 - v_long.abs() / VMAX).max(0.0);
-                ctl.throttle * ENGINE / 4.0 * if ctl.throttle * v_long < 0.0 { 1.0 } else { taper }
+                let taper = (1.0 - v_long.abs() / tu.vmax).max(0.0);
+                ctl.throttle * tu.engine / 4.0 * if ctl.throttle * v_long < 0.0 { 1.0 } else { taper }
             };
             // rolling resistance in sand (viscous + load-proportional sinkage drag)
             f_long -= v_long * tu.roll_visc + tu.roll_crr * load * v_long.clamp(-1.0, 1.0);
@@ -350,6 +829,7 @@ impl Buggy {
                     let Some(gh) = site.height(p.x, p.z) else { continue };
                     let pen = gh - p.y;
                     if pen > 0.0 {
+                        self.body_contact = true;
                         let n = site.contact_normal(p.x, p.z);
                         let v = self.vel + self.ang.cross(p - self.pos);
                         let fn_ = (pen * 60000.0 - v.dot(n) * 4000.0).max(0.0);
@@ -364,6 +844,9 @@ impl Buggy {
         self.vel += force / MASS * h;
         self.ang += self.inv_inertia_world() * torque * h;
         self.ang *= 1.0 - 0.3 * h; // a little angular damping
+        if tu.fun() {
+            self.fun_assists(site, ctl, up, h);
+        }
         self.pos += self.vel * h;
         let w = self.ang;
         self.rot = (self.rot + Quat::from_xyzw(w.x, w.y, w.z, 0.0) * self.rot * (0.5 * h)).normalize();
