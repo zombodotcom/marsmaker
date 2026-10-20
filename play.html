@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarsMaker: drive on Mars</title>
+  <link rel="icon" href="data:,">
+  <style>
+    html, body { margin: 0; height: 100%; background: #cc9e78; overflow: hidden; }
+    canvas#bevy { width: 100%; height: 100%; display: block; outline: none; }
+    #sites { position: absolute; top: 10px; right: 14px; font: 13px system-ui, sans-serif; color: #fff8ee; background: #0005; padding: 4px 10px; border-radius: 4px; text-decoration: none; }
+    #status { position: absolute; bottom: 10px; left: 14px; font: 14px system-ui, sans-serif; color: #fff8ee; }
+  </style>
+</head>
+<body>
+  <canvas id="bevy" tabindex="0"></canvas>
+  <a id="sites" href="live.html">All 1,262 sites</a>
+  <div id="status">Loading the viewer (wasm)...</div>
+  <script type="module">
+    // Flags come from the URL query, e.g. ?site=PSP_007018_1255_PSP_007229_1255&albedo&realistic,
+    // or ?live=<site id> to stream any HiRISE DTM from NASA (site list: live.html + live_index.json)
+    import init from './pkg/marsmaker-viewer.js';
+    const status = document.getElementById('status');
+    init().then(() => status.remove()).catch((e) => {
+      // winit uses an exception to hand the event loop to the browser; that one is not an error
+      if (String(e).includes('Using exceptions for control flow')) { status.remove(); return; }
+      status.textContent = 'Viewer failed to start: ' + e;
+      console.error(e);
+    });
+    document.getElementById('bevy').focus();
+    // the site picker links back to this page under whatever name it is served as
+    const page = location.pathname.split('/').pop();
+    if (page && page !== 'index.html') document.getElementById('sites').href = 'live.html?play=' + encodeURIComponent(page);
+  </script>
+
+  <style>
+    #mm-bar { position: absolute; top: 10px; right: 10px; display: flex; gap: 8px; z-index: 5;
+      font: 14px system-ui, sans-serif; }
+    #mm-bar a, #mm-bar button { background: #1a0d08b0; color: #fff3e6; border: 1px solid #ffffff33; border-radius: 999px;
+      padding: 6px 12px; text-decoration: none; cursor: pointer; font: inherit; }
+    #mm-help { position: absolute; top: 50px; right: 10px; max-width: 320px; z-index: 5; background: #1a0d08d0;
+      color: #fff3e6; border-radius: 10px; padding: 10px 14px; font: 13px/1.5 system-ui, sans-serif; transition: opacity 1s; }
+    #mm-help kbd { background: #3a1f12; border-radius: 4px; padding: 0 5px; font: 600 12px ui-monospace, monospace; }
+    #mm-touch { position: absolute; inset: auto 0 0 0; display: none; justify-content: space-between; padding: 0 14px 18px;
+      pointer-events: none; z-index: 5; }
+    #mm-touch .grp { display: flex; gap: 12px; pointer-events: auto; }
+    #mm-touch .grp.v { flex-direction: column; }
+    #mm-touch button { width: 72px; height: 72px; border-radius: 50%; border: 2px solid #ffffff55; background: #1a0d0870;
+      color: #fff; font: 700 24px system-ui, sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
+    #mm-touch button.on { background: #e8743bb0; }
+    #mm-touch .small { width: 52px; height: 52px; font-size: 14px; }
+    #sites { display: none; }  /* the viewer's own live-sites link; the bar below has one */
+    @media (pointer: coarse) { #mm-touch { display: flex; } }
+    @media (max-width: 420px) { #mm-touch { padding: 0 8px 14px; } #mm-touch .grp { gap: 8px; }
+      #mm-touch button { width: 60px; height: 60px; } #mm-touch .small { width: 46px; height: 46px; font-size: 13px; } }
+  </style>
+  <div id="mm-bar"><a href="./">&larr; Sites</a><a href="live.html">All 1,262</a><button id="mm-q" type="button">?</button></div>
+  <div id="mm-help"><kbd>W</kbd>/<kbd>&uarr;</kbd> throttle &nbsp;<kbd>S</kbd>/<kbd>&darr;</kbd> reverse &nbsp;
+    <kbd>A</kbd><kbd>D</kbd> steer<br><kbd>Space</kbd> brake &nbsp;<kbd>R</kbd> flip upright &nbsp;<kbd>C</kbd> camera<br>
+    <kbd>Shift</kbd> boost &nbsp;<kbd>Ctrl</kbd>/<kbd>J</kbd> jump &nbsp;in the air <kbd>W</kbd><kbd>S</kbd> pitch, <kbd>A</kbd><kbd>D</kbd> roll
+    (FUN mode)<br><kbd>M</kbd> FUN / REAL / SAND &nbsp;<kbd>Esc</kbd> menu (sites, mode, controls)<br>
+    SAND: <kbd>[</kbd><kbd>]</kbd> time-lapse &nbsp;<kbd>,</kbd><kbd>.</kbd> wind &nbsp;<kbd>K</kbd> real DTM<br>
+    Click the terrain first so it gets the keyboard. The page may freeze a few seconds while the site decodes.</div>
+  <div id="mm-touch">
+    <div class="grp"><button data-code="ArrowLeft" aria-label="steer left">&#9664;</button><button data-code="ArrowRight" aria-label="steer right">&#9654;</button>
+      <div class="grp v"><button class="small" data-code="KeyJ" aria-label="jump">jump</button><button class="small" data-code="ShiftLeft" aria-label="boost">boost</button></div></div>
+    <div class="grp"><div class="grp v"><button class="small" data-code="KeyR" aria-label="flip upright">flip</button><button class="small" data-code="KeyC" aria-label="camera">cam</button></div>
+      <div class="grp v"><button data-code="ArrowUp" aria-label="throttle">&#9650;</button><button data-code="ArrowDown" aria-label="reverse">&#9660;</button></div></div>
+  </div>
+  <script>
+    (function () {
+      // MarsMaker Pages overlay (injected by deploy/deploy.py)
+      const canvas = document.getElementById('bevy');
+      const help = document.getElementById('mm-help');
+      let hideT = setTimeout(() => { help.style.opacity = 0; }, 12000);
+      document.getElementById('mm-q').onclick = () => {
+        clearTimeout(hideT); help.style.opacity = help.style.opacity === '0' ? 1 : 0; canvas.focus();
+      };
+      const keyOf = { ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', KeyR: 'r', KeyC: 'c', KeyJ: 'j', ShiftLeft: 'Shift' };
+      const send = (type, code) => {
+        const ev = { code, key: keyOf[code] || code, bubbles: true, cancelable: true, composed: true };
+        canvas.dispatchEvent(new KeyboardEvent(type, ev));
+      };
+      document.querySelectorAll('#mm-touch button').forEach((b) => {
+        const code = b.dataset.code;
+        const down = (e) => { e.preventDefault(); if (b.classList.contains('on')) return; b.classList.add('on'); send('keydown', code); };
+        const up = (e) => { e.preventDefault(); if (!b.classList.contains('on')) return; b.classList.remove('on'); send('keyup', code); };
+        b.addEventListener('pointerdown', down);
+        b.addEventListener('pointerup', up);
+        b.addEventListener('pointercancel', up);
+        b.addEventListener('pointerleave', up);
+        b.addEventListener('contextmenu', (e) => e.preventDefault());
+      });
+      window.mmSendKey = send;  // for scripted tests
+    })();
+  </script>
+</body>
+</html>

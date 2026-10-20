@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarsMaker Live Sites</title>
+  <link rel="icon" href="data:,">
+  <!-- the viewer page the sites open in (a deploy that renames index.html sets this, or links here with ?play=NAME) -->
+  <meta name="play-page" content="play.html">
+  <style>
+    :root {
+      --bg: #17110d; --panel: #221912; --line: #3a2b20; --text: #f3e6d8; --dim: #b49c87;
+      --accent: #e0864a; --dot: #f0a36a; --dot-dim: #6b4a34; --map: #2c1f16; --grid: #3b2a1e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { padding: 12px 16px 8px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+    header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+    header .sub { color: var(--dim); font-size: 13px; }
+    main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 12px; padding: 0 16px 16px; }
+    #mapwrap { position: relative; background: var(--map); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-height: 240px; }
+    canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+    #tip { position: absolute; pointer-events: none; background: #000c; padding: 4px 8px; border-radius: 4px; font-size: 12px; display: none; max-width: 320px; }
+    aside { display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+    input[type=search] { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 14px; }
+    #count { color: var(--dim); font-size: 12px; }
+    #list { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .row { padding: 7px 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .row:hover, .row.sel { background: #33241a; }
+    .row .t { font-weight: 500; }
+    .row .m { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+    #detail { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px; display: none; gap: 10px; }
+    #detail img { width: 96px; height: 96px; object-fit: cover; border-radius: 4px; background: #000; flex: none; }
+    #detail .info { min-width: 0; }
+    #detail .t { font-weight: 600; }
+    #detail .m { color: var(--dim); font-size: 12px; word-break: break-all; }
+    a.play { display: inline-block; margin-top: 6px; padding: 6px 14px; background: var(--accent); color: #1b120c; border-radius: 6px; text-decoration: none; font-weight: 600; }
+    footer { color: var(--dim); font-size: 12px; padding: 0 16px 10px; }
+    footer a { color: var(--dim); }
+    @media (max-width: 800px) {
+      main { grid-template-columns: 1fr; grid-template-rows: 45vh auto; }
+      aside { min-height: 50vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><a href="./" style="color:inherit;text-decoration:none">&larr; MarsMaker</a>: drive any HiRISE DTM</h1>
+    <span class="sub">Streamed live from the public NASA/USGS bucket. Click a dot or a row to drive it.</span>
+  </header>
+  <main>
+    <div id="mapwrap"><canvas id="map"></canvas><div id="tip"></div></div>
+    <aside>
+      <input id="q" type="search" placeholder="Search name, id, crater, dunes..." autocomplete="off">
+      <div id="count">Loading the site index...</div>
+      <div id="detail"><img id="thumb" alt=""><div class="info"><div class="t" id="dt"></div><div class="m" id="dm"></div><a class="play" id="dplay" href="#">Drive here</a></div></div>
+      <div id="list"></div>
+    </aside>
+  </main>
+  <footer>HiRISE DTMs and orthoimages: NASA/JPL/University of Arizona, USGS Astrogeology (public domain). Each load downloads about 15-60 MB from NASA.</footer>
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const qs = new URLSearchParams(location.search);
+    const playParam = qs.get('play');
+    const play = playParam && /^[\w.-]+\.html$/.test(playParam) ? playParam : document.querySelector('meta[name=play-page]').content;
+    let sites = [], shown = [], base = '', sel = null, hover = null;
+    const href = (s) => `${play}?live=${encodeURIComponent(s.id)}`;
+    const url = (s, p) => base + (p.includes('/') ? p : `${s.id}/${p}`);
+
+    fetch('live_index.json').then((r) => r.json()).then((idx) => {
+      base = idx.base;
+      const f = Object.fromEntries(idx.fields.map((n, i) => [n, i]));
+      sites = idx.sites.map((r) => ({ id: r[f.id], title: r[f.title], lat: r[f.lat], lon: r[f.lon], dtm: r[f.dtm], ortho: r[f.ortho], res: r[f.res], proj: r[f.proj], mb: r[f.mb], sun: r[f.sun] }));
+      for (const s of sites) s.key = (s.title + ' ' + s.id).toLowerCase();
+      const want = qs.get('q');
+      if (want) $('q').value = want;
+      filter();
+    }).catch((e) => { $('count').textContent = 'Could not load live_index.json: ' + e; });
+
+    function filter() {
+      const words = $('q').value.toLowerCase().split(/\s+/).filter(Boolean);
+      shown = sites.filter((s) => words.every((w) => s.key.includes(w)));
+      $('count').textContent = `${shown.length} of ${sites.length} sites`;
+      render();
+    }
+    $('q').addEventListener('input', filter);
+
+    function render() {
+      const list = $('list');
+      list.textContent = '';
+      const frag = document.createDocumentFragment();
+      for (const s of shown.slice(0, 400)) {
+        const d = document.createElement('div');
+        d.className = 'row' + (s === sel ? ' sel' : '');
+        d.innerHTML = '<div class="t"></div><div class="m"></div>';
+        d.firstChild.textContent = s.title;
+        d.lastChild.textContent = `${s.id}  ${fmtLat(s.lat)} ${fmtLon(s.lon)}  ${s.res.toFixed(1)} m DTM${s.proj === 'eqc' ? '' : ' (polar)'}`;
+        d.onclick = () => select(s);
+        d.ondblclick = () => { location.href = href(s); };
+        frag.appendChild(d);
+      }
+      if (shown.length > 400) {
+        const d = document.createElement('div');
+        d.className = 'row m';
+        d.textContent = `... ${shown.length - 400} more, refine the search`;
+        frag.appendChild(d);
+      }
+      list.appendChild(frag);
+      draw();
+    }
+
+    const fmtLat = (v) => `${Math.abs(v).toFixed(2)}°${v < 0 ? 'S' : 'N'}`;
+    const fmtLon = (v) => `${Math.abs(v).toFixed(2)}°${v < 0 ? 'W' : 'E'}`;
+
+    function select(s) {
+      sel = s;
+      $('detail').style.display = 'flex';
+      $('dt').textContent = s.title;
+      $('dm').textContent = `${s.id} · ${fmtLat(s.lat)} ${fmtLon(s.lon)} · ${s.res.toFixed(2)} m DTM · ${s.ortho ? 'with ortho' : 'no ortho'} · ${s.sun ? `sun ${Math.round(s.sun[1])}° up` : 'sun unknown'}`;
+      $('thumb').src = url(s, s.dtm).replace(/\.tif$/, '.jpg');
+      $('dplay').href = href(s);
+      render();
+    }
+
+    // ---- map: plain equirectangular, lon -180..180, lat -90..90
+    const cv = $('map'), ctx = cv.getContext('2d');
+    let W = 0, H = 0, ox = 0, oy = 0, sc = 1;
+    function layout() {
+      const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+      cv.width = Math.max(1, r.width * dpr); cv.height = Math.max(1, r.height * dpr);
+      W = cv.width; H = cv.height;
+      sc = Math.min(W / 360, H / 180); ox = (W - 360 * sc) / 2; oy = (H - 180 * sc) / 2;
+      draw();
+    }
+    const px = (s) => [ox + (s.lon + 180) * sc, oy + (90 - s.lat) * sc];
+    function draw() {
+      if (!W) return;
+      const dpr = window.devicePixelRatio || 1;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--map');
+      ctx.fillRect(ox, oy, 360 * sc, 180 * sc);
+      ctx.strokeStyle = '#3b2a1e'; ctx.lineWidth = 1; ctx.fillStyle = '#8a6c56'; ctx.font = `${11 * dpr}px system-ui`;
+      for (let lon = -180; lon <= 180; lon += 30) {
+        const x = ox + (lon + 180) * sc; ctx.beginPath(); ctx.moveTo(x, oy); ctx.lineTo(x, oy + 180 * sc); ctx.stroke();
+        if (lon > -180 && lon < 180) ctx.fillText(`${lon}°`, x + 3, oy + 180 * sc - 4);
+      }
+      for (let lat = -90; lat <= 90; lat += 30) {
+        const y = oy + (90 - lat) * sc; ctx.beginPath(); ctx.moveTo(ox, y); ctx.lineTo(ox + 360 * sc, y); ctx.stroke();
+        if (lat > -90 && lat < 90) ctx.fillText(`${lat}°`, ox + 3, y - 3);
+      }
+      const set = new Set(shown);
+      const r = 2.2 * dpr;
+      ctx.fillStyle = '#6b4a34';
+      for (const s of sites) if (!set.has(s)) { const [x, y] = px(s); ctx.fillRect(x - r / 2, y - r / 2, r, r); }
+      ctx.fillStyle = '#f0a36a';
+      for (const s of shown) { const [x, y] = px(s); ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); }
+      for (const [s, c] of [[hover, '#fff'], [sel, '#fff']]) {
+        if (!s) continue;
+        const [x, y] = px(s); ctx.strokeStyle = c; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.arc(x, y, 6 * dpr, 0, 7); ctx.stroke();
+      }
+    }
+    function nearest(ev) {
+      const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+      const x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
+      let best = null, bd = (10 * dpr) ** 2;
+      for (const s of shown) { const [sx, sy] = px(s); const d = (sx - x) ** 2 + (sy - y) ** 2; if (d < bd) { bd = d; best = s; } }
+      return best;
+    }
+    cv.addEventListener('mousemove', (ev) => {
+      const s = nearest(ev), tip = $('tip');
+      if (s !== hover) { hover = s; draw(); }
+      if (s) {
+        const r = cv.getBoundingClientRect();
+        tip.style.display = 'block';
+        tip.style.left = Math.min(ev.clientX - r.left + 12, r.width - 200) + 'px';
+        tip.style.top = (ev.clientY - r.top + 12) + 'px';
+        tip.textContent = `${s.title} (${fmtLat(s.lat)} ${fmtLon(s.lon)})`;
+      } else tip.style.display = 'none';
+    });
+    cv.addEventListener('mouseleave', () => { hover = null; $('tip').style.display = 'none'; draw(); });
+    cv.addEventListener('click', (ev) => { const s = nearest(ev); if (s) select(s); });
+    cv.addEventListener('dblclick', (ev) => { const s = nearest(ev); if (s) location.href = href(s); });
+    new ResizeObserver(layout).observe($('mapwrap'));
+  </script>
+</body>
+</html>

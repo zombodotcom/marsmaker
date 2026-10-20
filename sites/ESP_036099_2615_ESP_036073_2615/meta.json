@@ -1,0 +1,286 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_036099_2615_ESP_036073_2615",
+ "id": "DTEPC_036099_2615_036073_2615_A01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Olympia Undae monitoring. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_036099_2615_ESP_036073_2615/DTEPC_036099_2615_036073_2615_A01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_036099_2615_ESP_036073_2615/ESP_036099_2615_RED_C_01_ORTHO.tif",
+ "source_crs": "+proj=stere +lat_0=90 +lat_ts=90 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 1.0059208577690508,
+ "converter_version": 2,
+ "created": "2026-10-16T00:10:16Z",
+ "center_lat": 81.72175,
+ "center_lon_east": 178.66750000000002,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=81.72175 +lon_0=178.6675 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 3.0,
+ "tile_px": 673,
+ "tile_overlap_px": 1,
+ "tile_size_m": 2016.0,
+ "grid_tiles": [
+  4,
+  6
+ ],
+ "grid_px": [
+  2689,
+  4033
+ ],
+ "grid_top_left_m": {
+  "east": -3992.0,
+  "north": 6048.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -4261.2939453125,
+ "height_max_m": -4191.5595703125,
+ "height_range_m": 69.734375,
+ "valid_fraction": 0.5882,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   10.0,
+   199.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    -217.6,
+    9.4
+   ],
+   "score_zero": 0.3665,
+   "score_estimate": 0.087
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.2937,
+   "top_left_m": {
+    "east": -3992.0,
+    "north": 6048.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.5775,
+   "top_left_m": {
+    "east": -1976.0,
+    "north": 6048.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 0,
+   "height": "h_0_2.png",
+   "texture": "t_0_2.png",
+   "valid_fraction": 0.1703,
+   "top_left_m": {
+    "east": 40.0,
+    "north": 6048.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.6392,
+   "top_left_m": {
+    "east": -3992.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -1976.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 1,
+   "height": "h_1_2.png",
+   "texture": "t_1_2.png",
+   "valid_fraction": 0.6402,
+   "top_left_m": {
+    "east": 40.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.3697,
+   "top_left_m": {
+    "east": -3992.0,
+    "north": 2016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -1976.0,
+    "north": 2016.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "height": "h_2_2.png",
+   "texture": "t_2_2.png",
+   "valid_fraction": 0.9825,
+   "top_left_m": {
+    "east": 40.0,
+    "north": 2016.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 2,
+   "height": "h_2_3.png",
+   "texture": "t_2_3.png",
+   "valid_fraction": 0.1204,
+   "top_left_m": {
+    "east": 2056.0,
+    "north": 2016.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.1106,
+   "top_left_m": {
+    "east": -3992.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 0.9997,
+   "top_left_m": {
+    "east": -1976.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "height": "h_3_2.png",
+   "texture": "t_3_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 40.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 3,
+   "height": "h_3_3.png",
+   "texture": "t_3_3.png",
+   "valid_fraction": 0.5149,
+   "top_left_m": {
+    "east": 2056.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 0.795,
+   "top_left_m": {
+    "east": -1976.0,
+    "north": -2016.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "height": "h_4_2.png",
+   "texture": "t_4_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 40.0,
+    "north": -2016.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "height": "h_4_3.png",
+   "texture": "t_4_3.png",
+   "valid_fraction": 0.7374,
+   "top_left_m": {
+    "east": 2056.0,
+    "north": -2016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "height": "h_5_1.png",
+   "texture": "t_5_1.png",
+   "valid_fraction": 0.3102,
+   "top_left_m": {
+    "east": -1976.0,
+    "north": -4032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "height": "h_5_2.png",
+   "texture": "t_5_2.png",
+   "valid_fraction": 0.421,
+   "top_left_m": {
+    "east": 40.0,
+    "north": -4032.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "height": "h_5_3.png",
+   "texture": "t_5_3.png",
+   "valid_fraction": 0.0821,
+   "top_left_m": {
+    "east": 2056.0,
+    "north": -4032.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 3,
+  "source_metres_per_pixel": 1.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}

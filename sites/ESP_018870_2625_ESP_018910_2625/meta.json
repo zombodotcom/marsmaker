@@ -1,0 +1,286 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_018870_2625_ESP_018910_2625",
+ "id": "DTEPC_018870_2625_018910_2625_A01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: North polar layered deposits. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_018870_2625_ESP_018910_2625/DTEPC_018870_2625_018910_2625_A01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_018870_2625_ESP_018910_2625/ESP_018870_2625_RED_C_01_ORTHO.tif",
+ "source_crs": "+proj=stere +lat_0=90 +lat_ts=90 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 0.9944237926867043,
+ "converter_version": 2,
+ "created": "2026-10-16T00:06:31Z",
+ "center_lat": 82.36195000000001,
+ "center_lon_east": 34.1566,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=82.36195 +lon_0=34.1566 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 3.0,
+ "tile_px": 673,
+ "tile_overlap_px": 1,
+ "tile_size_m": 2016.0,
+ "grid_tiles": [
+  4,
+  5
+ ],
+ "grid_px": [
+  2689,
+  3361
+ ],
+ "grid_top_left_m": {
+  "east": -4160.0,
+  "north": 5192.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -3555.190673828125,
+ "height_max_m": -3026.94384765625,
+ "height_range_m": 528.246826171875,
+ "valid_fraction": 0.5945,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   23.0,
+   212.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    -3129.8,
+    2274.4
+   ],
+   "score_zero": 0.252,
+   "score_estimate": 0.0168
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.0134,
+   "top_left_m": {
+    "east": -4160.0,
+    "north": 5192.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.2876,
+   "top_left_m": {
+    "east": -2144.0,
+    "north": 5192.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 0,
+   "height": "h_0_2.png",
+   "texture": "t_0_2.png",
+   "valid_fraction": 0.609,
+   "top_left_m": {
+    "east": -128.0,
+    "north": 5192.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 0,
+   "height": "h_0_3.png",
+   "texture": "t_0_3.png",
+   "valid_fraction": 0.0126,
+   "top_left_m": {
+    "east": 1888.0,
+    "north": 5192.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.8343,
+   "top_left_m": {
+    "east": -4160.0,
+    "north": 3176.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2144.0,
+    "north": 3176.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 1,
+   "height": "h_1_2.png",
+   "texture": "t_1_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -128.0,
+    "north": 3176.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 1,
+   "height": "h_1_3.png",
+   "texture": "t_1_3.png",
+   "valid_fraction": 0.2855,
+   "top_left_m": {
+    "east": 1888.0,
+    "north": 3176.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.642,
+   "top_left_m": {
+    "east": -4160.0,
+    "north": 1160.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2144.0,
+    "north": 1160.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "height": "h_2_2.png",
+   "texture": "t_2_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -128.0,
+    "north": 1160.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 2,
+   "height": "h_2_3.png",
+   "texture": "t_2_3.png",
+   "valid_fraction": 0.6583,
+   "top_left_m": {
+    "east": 1888.0,
+    "north": 1160.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.2538,
+   "top_left_m": {
+    "east": -4160.0,
+    "north": -856.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2144.0,
+    "north": -856.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "height": "h_3_2.png",
+   "texture": "t_3_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -128.0,
+    "north": -856.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 3,
+   "height": "h_3_3.png",
+   "texture": "t_3_3.png",
+   "valid_fraction": 0.8733,
+   "top_left_m": {
+    "east": 1888.0,
+    "north": -856.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.0051,
+   "top_left_m": {
+    "east": -4160.0,
+    "north": -2872.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 0.6853,
+   "top_left_m": {
+    "east": -2144.0,
+    "north": -2872.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "height": "h_4_2.png",
+   "texture": "t_4_2.png",
+   "valid_fraction": 0.5415,
+   "top_left_m": {
+    "east": -128.0,
+    "north": -2872.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "height": "h_4_3.png",
+   "texture": "t_4_3.png",
+   "valid_fraction": 0.1886,
+   "top_left_m": {
+    "east": 1888.0,
+    "north": -2872.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 3,
+  "source_metres_per_pixel": 1.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}

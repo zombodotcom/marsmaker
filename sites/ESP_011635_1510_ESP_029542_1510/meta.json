@@ -1,0 +1,220 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_011635_1510_ESP_029542_1510",
+ "id": "DTEEC_011635_1510_029542_1510_A01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Central uplift of Ritchey Crater. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_011635_1510_ESP_029542_1510/DTEEC_011635_1510_029542_1510_A01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_011635_1510_ESP_029542_1510/ESP_011635_1510_RED_C_02_ORTHO.tif",
+ "source_crs": "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 1.0125226563693348,
+ "converter_version": 2,
+ "created": "2026-10-15T23:47:24Z",
+ "center_lat": -28.5156,
+ "center_lon_east": -50.979,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=-28.5156 +lon_0=-50.979 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 2.0,
+ "tile_px": 1009,
+ "tile_overlap_px": 1,
+ "tile_size_m": 2016.0,
+ "grid_tiles": [
+  2,
+  8
+ ],
+ "grid_px": [
+  2017,
+  8065
+ ],
+ "grid_top_left_m": {
+  "east": -2016.0,
+  "north": 8064.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -1263.8232421875,
+ "height_max_m": -848.0123901367188,
+ "height_range_m": 415.81085205078125,
+ "valid_fraction": 0.3584,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   15.0,
+   197.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    7.4,
+    -0.3
+   ],
+   "score_zero": 0.2015,
+   "score_estimate": 0.1286
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.6621,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 8064.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.0123,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 8064.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.5964,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 6048.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 0.1187,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 6048.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.4533,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 0.228,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.2998,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 2016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 0.3215,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 2016.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.1618,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 0.4465,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 5,
+   "height": "h_5_0.png",
+   "texture": "t_5_0.png",
+   "valid_fraction": 0.0517,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -2016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "height": "h_5_1.png",
+   "texture": "t_5_1.png",
+   "valid_fraction": 0.5525,
+   "top_left_m": {
+    "east": 0.0,
+    "north": -2016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "height": "h_6_1.png",
+   "texture": "t_6_1.png",
+   "valid_fraction": 0.5939,
+   "top_left_m": {
+    "east": 0.0,
+    "north": -4032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 7,
+   "height": "h_7_1.png",
+   "texture": "t_7_1.png",
+   "valid_fraction": 0.5198,
+   "top_left_m": {
+    "east": 0.0,
+    "north": -6048.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 2,
+  "source_metres_per_pixel": 1.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}
