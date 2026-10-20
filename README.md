@@ -27,8 +27,9 @@ cargo build --release -j 4
 target/release/marsmaker-viewer path/to/sites/PSP_007018_1255_PSP_007229_1255
 ```
 
-W/S drive, A/D steer, Space brake, R flip upright, C camera, Esc quit. `--realistic` gives
-loose-sand grip. All flags and the browser (WebAssembly) build: `viewer/README.md`, `viewer/WEB.md`.
+W/S drive, A/D steer, Space brake, R flip upright, C camera, Esc quit. Two modes, M switches:
+JUST FOR FUN (default: Shift boost, Ctrl/J jump, air control, auto-flip) and REAL MARS
+(`--mode real`: loose sand, real power, no assists). All flags and the browser (WebAssembly) build: `viewer/README.md`, `viewer/WEB.md`.
 
 ### 2. Convert sites
 
