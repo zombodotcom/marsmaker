@@ -59,6 +59,8 @@ Both use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for 
 | `--spawn X,Z` | spawn at world X (east, m) / Z (south, m) instead of the automatic dune-field spawn. Positions are printed in the log. |
 | `--step N` | decimation step for the far terrain mesh (must divide 144). Default: automatic, keeping the site under about 16M vertices. |
 | `--high-cam` | start in the high camera. |
+| `--low` | cheaper rendering for weak machines / browsers (`?low`): no HDR/bloom, FXAA instead of MSAA, no close-up terrain detail, fewer dust particles, shorter tire tracks, smaller shadow maps. |
+| `--cam-zoom Z` | start with this mouse-wheel zoom factor (1 = default; for screenshots). |
 | `--autodrive` | full throttle with a slow sinusoidal weave. Auto-flips if the buggy sits on its roof for 3 s. |
 | `--weave A` | steer amplitude for `--autodrive`, 0..1 (default 0.35; 0 = straight). |
 | `--throttle T` | autodrive throttle, 0..1 (default 1). |
@@ -94,6 +96,27 @@ Example test run (about 20 s, below-normal priority is advisable on a shared PC)
 marsmaker-viewer --autodrive --seconds 20 --shot out.png --shot-at 10
 marsmaker-viewer --autodrive --seconds 20 --script jump@3,boost@3.5-6.5,upend@12,mode@16
 ```
+
+## Look (src/visuals.rs)
+
+- **Sky**: an analytic Mars sky on a camera-following dome (WebGL2-safe, no compute):
+  butterscotch overhead, hazy towards the horizon, a blue-white aureole around the sun that
+  grows near sunset, a small sun disc that blooms. Colours follow the sun elevation.
+- **Haze**: exponential-squared distance fog in the sky's horizon colour, so nothing between
+  camera and buggy is hazed, distant terrain fades into the horizon from ~1-2 km, and the far
+  edge melts into the sky.
+- **Camera**: HDR + TonyMcMapface + mild bloom, a little contrast grading, speed-based FOV
+  (+14 deg towards boost speed), smoothed look-ahead and a short shake on hard landings.
+- **Terrain**: the greyscale ortho is mapped through a Mars palette (dark basaltic sand ->
+  brown sand -> ochre -> bright dust) instead of a single tint; close up a cosmetic wind-ripple
+  normal and fine grain break up the texture (fades out by ~40 m).
+- **Buggy**: procedural sand rail: tube cage, painted panels, suited driver, engine and
+  exhausts, spare wheel, light bar, whip flag that sways, paddle (rear) / block (front) tires
+  on beadlock rims, double wishbones and coilovers that follow the suspension, wheels that
+  keep spinning in the air.
+- **Effects**: pooled dust puffs from each wheel on the ground (and a rooster tail from the
+  rear paddles), a burst on hard landings, puffs near the camera faded out; tire tracks that
+  darken the sand and fade over 40 s; boost flames (and a light, native only) in FUN mode.
 
 ## How it works (short)
 
