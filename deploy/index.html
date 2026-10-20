@@ -78,10 +78,23 @@
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
   .size { color: var(--muted); font-size: 13px; }
   .play { padding: 8px 16px; font-size: 15px; }
-  .soon { border-style: dashed; background: linear-gradient(160deg, #2b170e, #1d0f09); }
-  .soon .thumb { display: grid; place-items: center; font-size: 46px; color: var(--accent);
-    background: radial-gradient(circle at 50% 60%, #5e1d06 0%, #1a0d08 70%); }
-  .soon .thumb span { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; }
+  .live { border-color: var(--accent); background: linear-gradient(160deg, #3a1f12, #1d0f09);
+    box-shadow: 0 0 0 1px #e8743b55, 0 8px 30px #c1440e33; }
+  .live .thumb { display: grid; place-items: center; text-decoration: none; color: var(--accent2);
+    background: radial-gradient(circle at 50% 60%, #7a2e12 0%, #1a0d08 72%); }
+  .live .thumb .big { font-size: 54px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; text-align: center; }
+  .live .thumb .big small { display: block; font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: .08em;
+    text-transform: uppercase; margin-top: 6px; }
+  .live .badge { color: var(--ok); }
+
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .seg label { cursor: pointer; user-select: none; }
+  .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg span { display: inline-block; padding: 4px 14px; color: var(--muted); font-size: 14px; font-weight: 700; letter-spacing: .04em; }
+  .seg input:checked + span { background: var(--accent); color: #1a0b05; }
+  .seg input:focus-visible + span { outline: 2px solid var(--accent2); outline-offset: -2px; }
+  .mode { display: inline-flex; align-items: center; gap: 8px; }
+  .mode small { color: var(--muted); }
 
   section h2 { font-size: 24px; margin: 34px 0 10px; }
   .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 18px; }
@@ -107,6 +120,7 @@
       with nothing to install.</p>
     <div class="hero-actions">
       <a class="btn" id="quick" href="play.html">&#9654; Play Russell Crater</a>
+      <a class="btn ghost" href="live.html">Any of 1,262 sites, live from NASA</a>
       <a class="btn ghost" href="#controls">Controls</a>
       <a class="btn ghost" href="https://github.com/zombodotcom/marsmaker">Source on GitHub</a>
     </div>
@@ -115,7 +129,10 @@
   <div class="panel">
     <div class="opts">
       <b>Options</b>
-      <label class="sw"><input type="checkbox" id="o-realistic"> Realistic sand <small>(less grip)</small></label>
+      <span class="mode" role="radiogroup" aria-label="Driving mode"><span class="seg">
+        <label><input type="radio" name="mode" value="fun" id="o-mode-fun"><span>FUN</span></label>
+        <label><input type="radio" name="mode" value="real" id="o-mode-real"><span>REAL</span></label></span>
+        <small id="mode-note"></small></span>
       <label class="sw"><input type="checkbox" id="o-albedo"> De-lit albedo <small>(where available)</small></label>
       <label class="sw"><input type="checkbox" id="o-highcam"> Start in high camera</label>
       <label class="sw"><input type="checkbox" id="o-autodrive"> Autodrive <small>(sit back and watch)</small></label>
@@ -137,7 +154,14 @@
       <div class="key"><kbd>Space</kbd> brake</div>
       <div class="key"><kbd>R</kbd> flip upright</div>
       <div class="key"><kbd>C</kbd> chase / high camera</div>
+      <div class="key"><kbd>Shift</kbd> boost</div>
+      <div class="key"><kbd>Ctrl</kbd><kbd>J</kbd> jump</div>
+      <div class="key">in the air: <kbd>W</kbd><kbd>S</kbd> pitch, <kbd>A</kbd><kbd>D</kbd> roll</div>
+      <div class="key"><kbd>M</kbd> switch FUN / REAL mode</div>
     </div>
+    <p class="note"><b>FUN</b> (default) has extra grip and power, Shift boost, jumps, air control and auto-flip.
+      <b>REAL</b> is loose dry sand with the real power and no assists, so boost, jump and air control do nothing.
+      Press <kbd>M</kbd> while driving to switch.</p>
     <p class="note">Click the terrain once so it gets keyboard focus. The page freezes for a few seconds while a
       site decodes, which is normal. You spawn in the most dune-rich part of each site. Black areas are gaps in
       the NASA elevation model.</p>
@@ -162,22 +186,33 @@
 
 <script>
 (function () {
-  const opts = ['realistic', 'albedo', 'highcam', 'autodrive'];
-  const flag = { realistic: 'realistic', albedo: 'albedo', highcam: 'high-cam', autodrive: 'autodrive' };
+  const opts = ['albedo', 'highcam', 'autodrive'];
+  const flag = { albedo: 'albedo', highcam: 'high-cam', autodrive: 'autodrive' };
+  const modeNote = { fun: 'boost, jump, air control, extra grip', real: 'loose sand, real power, no assists' };
   const box = {};
   let store = {};
   try { store = JSON.parse(localStorage.getItem('mm-opts') || '{}'); } catch (e) {}
+  // the old "realistic sand" switch is REAL mode now
+  let mode = store.mode === 'real' || store.mode === 'fun' ? store.mode : (store.realistic ? 'real' : 'fun');
+  const radios = document.querySelectorAll('input[name=mode]');
+  function save() {
+    const s = { mode }; for (const k of opts) s[k] = box[k].checked;
+    try { localStorage.setItem('mm-opts', JSON.stringify(s)); } catch (e) {}
+    document.getElementById('mode-note').textContent = modeNote[mode];
+    relink();
+  }
+  radios.forEach((r) => {
+    r.checked = r.value === mode;
+    r.addEventListener('change', () => { if (r.checked) { mode = r.value; save(); } });
+  });
   for (const o of opts) {
     box[o] = document.getElementById('o-' + o);
     box[o].checked = !!store[o];
-    box[o].addEventListener('change', () => {
-      const s = {}; for (const k of opts) s[k] = box[k].checked;
-      try { localStorage.setItem('mm-opts', JSON.stringify(s)); } catch (e) {}
-      relink();
-    });
+    box[o].addEventListener('change', save);
   }
+  document.getElementById('mode-note').textContent = modeNote[mode];
   function href(site) {
-    const q = ['site=' + encodeURIComponent(site)];
+    const q = ['site=' + encodeURIComponent(site), 'mode=' + mode];
     for (const o of opts) if (box[o].checked) q.push(flag[o]);
     return 'play.html?' + q.join('&');
   }
@@ -215,14 +250,16 @@
             <a class="btn play" data-site="${esc(s.site)}" href="play.html?site=${esc(s.site)}">&#9654; Play</a></div>
         </div>
       </article>`);
-    cards.push(`
-      <article class="card soon">
-        <div class="thumb"><span>1,262</span></div>
+    cards.unshift(`
+      <article class="card live">
+        <a class="thumb" href="live.html"><span class="big">1,262<small>sites on a Mars map</small></span>
+          <span class="badge">live</span></a>
         <div class="body">
           <h3>Any of 1,262 sites, live from NASA</h3>
-          <p class="why">Coming soon: pick any HiRISE DTM on Mars and stream it straight from the public NASA/USGS
-            archive into the buggy, no pre-packing needed.</p>
-          <div class="row"><span class="size">coming soon</span></div>
+          <p class="why">Pick any HiRISE DTM on a map of Mars and stream it straight from the public NASA/USGS
+            archive into the buggy, with no pre-packing. Full-resolution data, so first loads are slower.</p>
+          <div class="row"><span class="size">15-60 MB / site</span>
+            <a class="btn play" href="live.html">&#9654; Browse</a></div>
         </div>
       </article>`);
     grid.innerHTML = cards.join('');

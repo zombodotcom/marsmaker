@@ -1,0 +1,38 @@
+# Netlify config for the assembled site (D:\marsmaker_data\pages_build). deploy/deploy.py --netlify
+# copies this file into that folder and runs `netlify deploy --prod` from there, so `publish = "."`.
+# GitHub Pages ignores it.
+#
+# No COOP/COEP headers on purpose: COEP require-corp would block the live-mode range reads from
+# NASA's bucket, and the wasm is single-threaded, so cross-origin isolation buys nothing.
+# File names are not content-hashed (pkg/marsmaker-viewer_bg.wasm is overwritten on each deploy),
+# so nothing is marked immutable; Netlify revalidates with ETags after max-age.
+
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/*.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+
+[[headers]]
+  for = "/pkg/*"
+  [headers.values]
+    Cache-Control = "public, max-age=3600, stale-while-revalidate=86400"
+
+[[headers]]
+  for = "/sites/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+    Access-Control-Allow-Origin = "*"
+
+[[headers]]
+  for = "/thumbs/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
