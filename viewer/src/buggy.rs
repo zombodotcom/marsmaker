@@ -984,7 +984,7 @@ impl Buggy {
                 ctl.throttle * tu.engine / 4.0 * if ctl.throttle * v_long < 0.0 { 1.0 } else { taper }
             };
             // rolling resistance in sand (viscous + load-proportional sinkage drag)
-            f_long -= v_long * tu.roll_visc + (tu.roll_crr + sand.crr) * load * v_long.clamp(-1.0, 1.0);
+            f_long -= v_long * tu.roll_visc + tu.roll_crr * load * v_long.clamp(-1.0, 1.0);
             if ctl.throttle == 0.0 && !ctl.brake && v_long.abs() < 1.0 {
                 f_long -= v_long * 3000.0; // idle hold (engine braking / handbrake) so it settles on slopes
             }
@@ -1009,6 +1009,9 @@ impl Buggy {
                 }
                 ft = f;
             }
+            // REAL SAND hook: compaction / bulldozing drag is the sand pushing back on the tire,
+            // on top of what the tread can transmit (not inside the friction budget)
+            let ft = ft - fwd * (sand.crr * load * v_long.clamp(-1.0, 1.0));
             // Tire forces act through the suspension links, so their roll moment on the sprung
             // mass is about the roll centre, not the contact patch. Applying them at the patch
             // (a ground-level roll centre) exaggerates "tripping"; a double-wishbone buggy's roll

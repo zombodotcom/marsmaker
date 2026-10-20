@@ -39,7 +39,10 @@ pub const BLOCK: usize = 16;
 /// furthest upwind distance checked for a shadow (cells)
 const MAX_SHADOW: usize = 64;
 const MAX_HOPS: usize = 200;
-const MAX_RELAX: usize = 400;
+const SEG: usize = 8;
+const MAX_RELAX: usize = 96;
+/// the estimated floor is raised by this much (m): relief below it is DTM noise, not sand
+const FLOOR_SLACK: f32 = 0.4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
@@ -124,15 +127,14 @@ impl Region {
         let v = (p * (1.0 - fa) + q * fa) * (1.0 - fb) + (r * (1.0 - fa) + s * fa) * fb;
         v.is_finite().then_some(v)
     }
-    pub fn centre(&self) -> Vec2 {
-        self.world((self.n - 1) as f32 * 0.5, (self.n - 1) as f32 * 0.5)
-    }
 }
 
-/// Sand floor from the raw DTM on the region grid: a lower envelope (moving minimum over
-/// +-`r` cells along both grid axes) smoothed by two box blurs of +-`r/2`, never above the DTM.
-/// Interdune troughs and the plain around a dune field become the floor; dunes are what sticks
-/// up out of it. Hills of bedrock are mistaken for sand too (see the README caveats).
+/// Sand floor from the raw DTM on the region grid: a morphological opening (moving minimum,
+/// then moving maximum, over +-`r` cells along both grid axes), which removes everything
+/// narrower than the window (dunes) but keeps broad slopes and plains, smoothed by two box blurs
+/// of +-`r/2`, raised by `FLOOR_SLACK` (so DTM noise on a plain isn't "sand") and never above the
+/// DTM. Interdune troughs and the plain around a dune field become the floor; dunes are what
+/// sticks up out of it. Narrow bedrock knobs are mistaken for sand too (see the README caveats).
 pub fn base_from(raw: &[f32], n: usize, r: usize) -> Vec<f32> {
     let inf = |v: f32| if v.is_finite() { v } else { f32::INFINITY };
     let mut a: Vec<f32> = raw.iter().map(|&v| inf(v)).collect();
@@ -158,18 +160,32 @@ pub fn base_from(raw: &[f32], n: usize, r: usize) -> Vec<f32> {
             out[i] = line[*dq.front().unwrap()];
         }
     };
-    for b in 0..n {
-        line.copy_from_slice(&a[b * n..(b + 1) * n]);
-        movmin(&line, &mut out);
-        a[b * n..(b + 1) * n].copy_from_slice(&out);
-    }
-    for c in 0..n {
-        for b in 0..n {
-            line[b] = a[b * n + c];
+    // opening = erosion (min) then dilation (max = -min(-x)); infinite (nodata) cells are
+    // ignored by the max pass
+    for pass in 0..2 {
+        if pass == 1 {
+            for v in a.iter_mut() {
+                *v = if v.is_finite() { -*v } else { f32::INFINITY };
+            }
         }
-        movmin(&line, &mut out);
         for b in 0..n {
-            a[b * n + c] = out[b];
+            line.copy_from_slice(&a[b * n..(b + 1) * n]);
+            movmin(&line, &mut out);
+            a[b * n..(b + 1) * n].copy_from_slice(&out);
+        }
+        for c in 0..n {
+            for b in 0..n {
+                line[b] = a[b * n + c];
+            }
+            movmin(&line, &mut out);
+            for b in 0..n {
+                a[b * n + c] = out[b];
+            }
+        }
+        if pass == 1 {
+            for v in a.iter_mut() {
+                *v = if v.is_finite() { -*v } else { f32::INFINITY };
+            }
         }
     }
     // box blur (finite values only), twice
@@ -180,7 +196,7 @@ pub fn base_from(raw: &[f32], n: usize, r: usize) -> Vec<f32> {
             for k in 0..n {
                 let get = |i: usize| if pass == 0 { a[k * n + i] } else { a[i * n + k] };
                 let (mut s, mut cnt) = (0.0f64, 0u32);
-                let mut add = |v: f32, sign: f64, s: &mut f64, cnt: &mut u32| {
+                let add = |v: f32, sign: f64, s: &mut f64, cnt: &mut u32| {
                     if v.is_finite() {
                         *s += v as f64 * sign;
                         if sign > 0.0 { *cnt += 1 } else { *cnt -= 1 }
@@ -203,7 +219,7 @@ pub fn base_from(raw: &[f32], n: usize, r: usize) -> Vec<f32> {
             a = res;
         }
     }
-    a.iter().zip(raw).map(|(&b, &z)| if z.is_finite() && b.is_finite() { b.min(z) } else if z.is_finite() { z } else { f32::NAN }).collect()
+    a.iter().zip(raw).map(|(&b, &z)| if z.is_finite() && b.is_finite() { (b + FLOOR_SLACK).min(z) } else if z.is_finite() { z } else { f32::NAN }).collect()
 }
 
 /// Run statistics returned to the main thread.
@@ -231,6 +247,10 @@ pub struct Sim {
     pub sim_s: f64,
     acc: f64,
     hmax: f32,
+    /// per row, max height of each SEG-cell segment (only ever raised between rebuilds, so it
+    /// is an upper bound): lets the shadow scan skip low stretches
+    segmax: Vec<f32>,
+    nseg: usize,
     nb: usize,
     dirty: Vec<bool>,
     pub dirty_list: Vec<u32>,
@@ -242,7 +262,21 @@ impl Sim {
         let h = reg.h0.clone();
         let hmax = h.iter().copied().filter(|v| v.is_finite()).fold(f32::NEG_INFINITY, f32::max);
         let nb = reg.n.div_ceil(BLOCK);
+        let n = reg.n;
+        let nseg = n.div_ceil(SEG);
+        let mut segmax = vec![f32::NEG_INFINITY; n * nseg];
+        for b in 0..n {
+            for a in 0..n {
+                let v = h[b * n + a];
+                if v.is_finite() {
+                    let k = b * nseg + a / SEG;
+                    segmax[k] = segmax[k].max(v);
+                }
+            }
+        }
         Self {
+            segmax,
+            nseg,
             reg,
             p,
             h,
@@ -273,6 +307,16 @@ impl Sim {
     #[inline]
     fn unit(&mut self) -> f32 {
         (self.rand() >> 40) as f32 / (1u64 << 24) as f32
+    }
+
+    /// cell j got higher: keep the upper bounds used by the shadow test valid
+    #[inline]
+    fn raised(&mut self, j: usize) {
+        let v = self.h[j];
+        self.hmax = self.hmax.max(v);
+        let n = self.reg.n;
+        let k = (j / n) * self.nseg + (j % n) / SEG;
+        self.segmax[k] = self.segmax[k].max(v);
     }
 
     #[inline]
@@ -318,12 +362,20 @@ impl Sim {
         let step = self.p.dx * self.p.tan_shadow;
         let reach = ((self.hmax - h) / step).ceil().max(0.0) as usize;
         let maxd = reach.min(MAX_SHADOW).min(a);
-        let mut lim = 0.0;
-        for d in 1..=maxd {
-            lim += step;
-            if self.h[row + a - d] - h > lim {
+        let srow = b * self.nseg;
+        let mut d = 1;
+        while d <= maxd {
+            let i = a - d;
+            // whole segment too low to shadow us from its nearest cell? skip it
+            let s0 = i / SEG * SEG;
+            if self.segmax[srow + i / SEG] - h <= d as f32 * step {
+                d += i - s0 + 1;
+                continue;
+            }
+            if self.h[row + i] - h > d as f32 * step {
                 return true;
             }
+            d += 1;
         }
         false
     }
@@ -396,7 +448,7 @@ impl Sim {
             let j = best.1;
             self.h[c] -= m;
             self.h[j] += m;
-            self.hmax = self.hmax.max(self.h[j]);
+            self.raised(j);
             self.mark(c);
             self.mark(j);
             moves += 1;
@@ -469,11 +521,16 @@ impl Sim {
         self.h[i] -= e;
         self.mark(i);
         let mv = self.relax(i, self.p.tan_repose);
-        // carry it downwind (periodic along the wind, same crosswind row)
-        let mut aa = a;
+        // carry it downwind. Sand blown out of the downwind edge comes back in at the upwind edge
+        // (mass is conserved) but in a random row, so it doesn't run in a lane forever.
+        let (mut aa, mut b) = (a, b);
         let mut placed = false;
         for hop in 0..MAX_HOPS {
-            aa = (aa + self.p.hop) % n;
+            aa += self.p.hop;
+            if aa >= n {
+                aa -= n;
+                b = (self.rand() % n as u64) as usize;
+            }
             let j = b * n + aa;
             let hj = self.h[j];
             if !hj.is_finite() {
@@ -489,7 +546,7 @@ impl Sim {
             let w2 = self.edge_w(aa, b);
             if hop + 1 == MAX_HOPS || self.unit() < pd * w2 {
                 self.h[j] += e;
-                self.hmax = self.hmax.max(self.h[j]);
+                self.raised(j);
                 self.mark(j);
                 let mv2 = self.relax(j, self.p.tan_repose);
                 stats.avalanche_moves += mv2;

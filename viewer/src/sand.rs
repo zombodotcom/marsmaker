@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 /// static sinkage in deep loose sand at the static wheel load (420 kg * 3.711 / 4 ~ 390 N)
 const Z_REF: f32 = 0.05;
 const LOAD_REF: f32 = 390.0;
-const Z_MAX: f32 = 0.36;
+const Z_MAX: f32 = 0.30;
 const TIRE_R: f32 = 0.42;
 const TIRE_HALF_W: f32 = 0.2;
 const BERM_W: f32 = 0.3;
@@ -42,8 +42,13 @@ fn chord(z: f32) -> f32 {
 /// compaction resistance: crr = C_COMPACT * sqrt(z / D) (rigid-wheel rule of thumb)
 const C_COMPACT: f32 = 0.5;
 /// bulldozing a bow wave once sunk past BULL_FROM
-const C_BULL: f32 = 1.4;
+const C_BULL: f32 = 1.0;
 const BULL_FROM: f32 = 0.12;
+/// a wheel spinning in place (slipping, contact speed < DIG_BELOW) digs itself in at up to this
+/// rate (m/s); rolling freely refills the hole under it at DIG_RECOVER
+const DIG_RATE: f32 = 0.05;
+const DIG_BELOW: f32 = 0.5;
+const DIG_RECOVER: f32 = 0.2;
 /// fraction of the pressed-out volume pushed into the side berms (the rest is compaction)
 const BERM_FRAC: f32 = 0.7;
 /// fine rut grid spacing target (m) and patch size (posts)
@@ -52,7 +57,7 @@ const RUT_SPACING: f32 = 0.2;
 const RUT_DECAY_PER_EVENT: f64 = 0.5;
 
 #[cfg(not(target_arch = "wasm32"))]
-const SIM_BUDGET_MS: f32 = 6.0;
+const SIM_BUDGET_MS: f32 = 12.0;
 #[cfg(not(target_arch = "wasm32"))]
 const PUBLISH_BUDGET_MS: f32 = 4.0;
 #[cfg(target_arch = "wasm32")]
@@ -79,17 +84,19 @@ pub struct SandArgs {
     pub shots: Vec<(String, f32)>,
     /// SAND log period (s)
     pub log: f32,
+    /// test hook: press K (back to the real DTM) at these times (s)
+    pub reset_at: Vec<f32>,
 }
 
 impl Default for SandArgs {
     fn default() -> Self {
-        Self { rate: None, wind: None, flux: 5.0, region: 1024.0, shots: Vec::new(), log: 1.0 }
+        Self { rate: None, wind: None, flux: 5.0, region: 1024.0, shots: Vec::new(), log: 1.0, reset_at: Vec::new() }
     }
 }
 
 impl SandArgs {
     pub fn takes(flag: &str) -> bool {
-        matches!(flag, "--sand-rate" | "--sand-wind" | "--sand-flux" | "--sand-region" | "--sand-shots" | "--sand-log")
+        matches!(flag, "--sand-rate" | "--sand-wind" | "--sand-flux" | "--sand-region" | "--sand-shots" | "--sand-log" | "--sand-reset")
     }
     pub fn set(&mut self, flag: &str, v: String) {
         let num = |v: &str| v.trim().parse::<f64>().unwrap_or_else(|_| panic!("{flag} needs a number"));
@@ -99,6 +106,7 @@ impl SandArgs {
             "--sand-flux" => self.flux = num(&v) as f32,
             "--sand-region" => self.region = (num(&v) as f32).clamp(128.0, 4096.0),
             "--sand-log" => self.log = num(&v) as f32,
+            "--sand-reset" => self.reset_at.extend(v.split(',').filter(|s| !s.is_empty()).map(|t| num(t) as f32)),
             "--sand-shots" => {
                 for item in v.split(',').filter(|s| !s.is_empty()) {
                     let (name, t) = item.rsplit_once('@').unwrap_or_else(|| panic!("--sand-shots item {item:?} needs NAME@T"));
@@ -249,7 +257,8 @@ pub struct WheelSand {
     pub slip: f32,
     pub thick: f32,
     pub slope: f32,
-    pub seen: bool,
+    /// depth dug by wheelspin in place (m)
+    pub dig: f32,
     dist_t: f32,
 }
 
@@ -375,7 +384,12 @@ pub fn wheel(site: &Site, i: usize, mode: Mode, contact: Vec3, n: Vec3, load: f3
     let slope = n.y.clamp(-1.0, 1.0).acos();
     let repose = smoothstep(18f32.to_radians(), 30f32.to_radians(), slope);
     let mut ws = lock(&s.wheels)[i];
-    let z_t = (Z_REF * (load / LOAD_REF).clamp(0.0, 4.0) * sandy * (1.0 + 0.8 * repose) * (1.0 + 1.5 * ws.slip)).min(Z_MAX);
+    // wheelspin in place digs in (progressively, so a stuck buggy bogs down)
+    let spinning = ws.slip > 0.6 && v.length() < DIG_BELOW && load > 50.0;
+    ws.dig = (ws.dig + if spinning { DIG_RATE * ws.slip * sandy * h } else { -DIG_RECOVER * h }).clamp(0.0, Z_MAX);
+    // a fast tire has less time to sink (it planes over the surface): ~1/2 at 30 km/h
+    let speed = 1.0 / (1.0 + v.length() / 8.0);
+    let z_t = (Z_REF * (load / LOAD_REF).clamp(0.0, 2.5) * sandy * (1.0 + 0.8 * repose) * (1.0 + 0.5 * ws.slip) * speed + ws.dig).min(Z_MAX);
     let g = Geom::of(site);
     let f2 = Vec2::new(fwd.x, fwd.z).normalize_or(Vec2::X);
     let dir = if v.dot(fwd) < 0.0 { -1.0 } else { 1.0 };
@@ -394,7 +408,7 @@ pub fn wheel(site: &Site, i: usize, mode: Mode, contact: Vec3, n: Vec3, load: f3
         lock(&s.disturb).push(p);
         ws.dist_t = 0.15;
     }
-    ws = WheelSand { sink: z_t, fresh, crr, grip, thick, slope: slope.to_degrees(), seen: true, ..ws };
+    ws = WheelSand { sink: z_t, fresh, crr, grip, thick, slope: slope.to_degrees(), ..ws };
     lock(&s.wheels)[i] = ws;
     if z_t > 0.003 {
         s.changed.store(true, Relaxed);
@@ -410,7 +424,8 @@ pub fn wheel_slip(site: &Site, i: usize, mode: Mode, k: f32) {
     }
     if let Some(s) = &site.sand {
         let w = &mut lock(&s.wheels)[i];
-        let target = (k - 1.0).clamp(0.0, 1.0);
+        // k ~ 3.5 is flat-out wheelspin from a standstill in REAL tuning
+        let target = ((k - 1.0) / 2.5).clamp(0.0, 1.0);
         w.slip += (target - w.slip) * 0.02;
     }
 }
@@ -483,7 +498,7 @@ fn build_region(site: &Site, shared: &SandShared, centre: Vec2, u: Vec2, size_m:
             reg.h0[b * n + a] = tri(site, p, false).unwrap_or(f32::NAN);
         }
     }
-    reg.base = sand_sim::base_from(&raw, n, (80.0 / dx) as usize);
+    reg.base = sand_sim::base_from(&raw, n, (100.0 / dx) as usize);
     // never let the floor sit above the current surface
     for (b, h) in reg.base.iter_mut().zip(&reg.h0) {
         if h.is_finite() {
@@ -720,18 +735,19 @@ fn sand_control(
     site: Option<ResMut<Site>>,
     buggy: Option<Res<Buggy>>,
     ctl: Res<Controls>,
-    time: Res<Time<Real>>,
+    time: Res<Time>,
     render: Option<Res<TerrainRender>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let (Some(mut site), Some(buggy)) = (site, buggy) else { return };
     let now = time.elapsed_secs();
-    st.start.get_or_insert(now);
+    let t_run = now - *st.start.get_or_insert(now);
+    let scripted_reset = args.reset_at.iter().any(|&t| t <= t_run && t > t_run - time.delta_secs());
     let sand_mode = buggy.tuning.mode == Mode::Sand;
     let pos = Vec2::new(buggy.pos.x, buggy.pos.z);
 
-    if keys.just_pressed(KeyCode::KeyK) {
+    if keys.just_pressed(KeyCode::KeyK) || scripted_reset {
         // back to the real DTM
         st.task = None;
         st.sim = None;
@@ -844,9 +860,9 @@ fn sand_control(
     let w = *lock(&shared.wheels);
     let sink = w.iter().map(|w| w.sink).sum::<f32>() / 4.0;
     let dt = time.delta_secs();
-    if ctl.throttle.abs() > 0.5 && buggy.vel.length() < 0.6 && sink > 0.07 {
+    if ctl.throttle.abs() > 0.5 && buggy.vel.length() < 1.0 && sink > 0.06 {
         st.bog_t += dt;
-        if st.bog_t > 1.5 && !st.bogged {
+        if st.bog_t > 2.0 && !st.bogged {
             st.bogged = true;
             st.bog_count += 1;
             info!("SAND BOGGED DOWN #{} at ({:.1}, {:.1}): sinkage {:.0}/{:.0}/{:.0}/{:.0} cm, slip {:.2}", st.bog_count, pos.x, pos.y,
@@ -874,12 +890,20 @@ fn sand_sim(mut st: ResMut<SandState>, site: Option<Res<Site>>, buggy: Option<Re
     if st.task.is_some() || st.sim.is_none() || st.rebuild_at.is_some() {
         return;
     }
+    // test dumps need the sim at rest
+    if !st.dumps_pending.is_empty() {
+        let names = std::mem::take(&mut st.dumps_pending);
+        for name in names {
+            dump(&st, &name);
+        }
+    }
     let sand_mode = buggy.tuning.mode == Mode::Sand;
     let now = Instant::now();
     let dt = st.last_launch.map_or(0.0, |t| now.duration_since(t).as_secs_f64()).min(0.25);
     st.last_launch = Some(now);
     st.last_dt = dt;
     let p = st.params.unwrap();
+    #[allow(unused_mut)]
     let mut sim = st.sim.take().unwrap();
     let n2 = (sim.reg.n * sim.reg.n) as f64;
     let picks = if sand_mode { st.rate() * dt * p.picks_per_cell_per_s() * n2 } else { 0.0 };
@@ -1227,7 +1251,7 @@ fn sand_report(
     rnd: Res<SandRender>,
     site: Option<Res<Site>>,
     buggy: Option<Res<Buggy>>,
-    time: Res<Time<Real>>,
+    time: Res<Time>,
     mut hud: ResMut<SandHud>,
 ) {
     let (Some(site), Some(buggy)) = (site, buggy) else { return };
@@ -1262,7 +1286,7 @@ fn sand_report(
             );
         }
         if st.bogged {
-            s += "   BOGGED DOWN - back out along your ruts";
+            s += "   BOGGED DOWN - ease off, then back out along your ruts";
         }
         if changed {
             s += "\nSIMULATED - not NASA data (K = back to the real DTM)";
@@ -1313,12 +1337,6 @@ fn sand_report(
                 info!("SAND screenshot saved to {p2}");
             });
             st.dumps_pending.push(name.clone());
-        }
-    }
-    if !st.dumps_pending.is_empty() && st.sim.is_some() {
-        let names = std::mem::take(&mut st.dumps_pending);
-        for name in names {
-            dump(&st, &name);
         }
     }
 }
