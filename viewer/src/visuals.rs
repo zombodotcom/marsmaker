@@ -267,6 +267,7 @@ struct CamFx {
 
 fn camera_fx(
     buggy: Option<Res<Buggy>>,
+    site: Option<Res<Site>>,
     time: Res<Time>,
     mut fx: ResMut<CamFx>,
     mut cam: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
@@ -302,7 +303,11 @@ fn camera_fx(
     let want = (hv * 0.10).clamp_length_max(3.5) * near;
     let a = 1.0 - (-dt * 3.0).exp();
     fx.look = fx.look.lerp(want, a);
-    let target = b.pos + Vec3::Y * 1.0 + fx.look;
+    let mut target = b.pos + Vec3::Y * crate::camera::LOOK_Y + fx.look;
+    // the look-ahead point must not sink into a dune face the buggy is climbing
+    if let Some(g) = site.and_then(|s| s.height(target.x, target.z)) {
+        target.y = target.y.max(g + 0.6);
+    }
     if t.translation.distance(target) > 0.1 {
         t.look_at(target, Vec3::Y);
     }

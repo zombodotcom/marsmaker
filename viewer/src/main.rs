@@ -15,6 +15,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod bench;
 mod buggy;
+mod camera;
 mod live;
 mod sand;
 mod sand_sim;
@@ -551,6 +552,7 @@ fn chase_camera(
     mut cam_mode: ResMut<CamMode>,
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
+    mut chase: Local<camera::ChaseCam>,
     mut cam: Query<&mut Transform, With<Camera3d>>,
 ) {
     // mouse wheel: each notch zooms 15 %, from close up to ~30x the default distance
@@ -562,15 +564,9 @@ fn chase_camera(
         cam_mode.zoom = (cam_mode.zoom * 0.85f32.powf(notches)).clamp(0.35, 30.0);
     }
     let (Some(buggy), Some(site), Ok(mut cam)) = (buggy, site, cam.single_mut()) else { return };
-    let f = buggy.forward();
-    let flat = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::NEG_Z);
-    let mut want = buggy.pos - flat * cam_mode.dist * cam_mode.zoom + Vec3::Y * cam_mode.height * cam_mode.zoom;
-    if let Some(g) = site.height(want.x, want.z) {
-        want.y = want.y.max(g + 1.0); // never inside a dune
-    }
-    let a = 1.0 - (-time.delta_secs() * 5.0).exp();
-    cam.translation = cam.translation.lerp(want, a);
-    cam.look_at(buggy.pos + Vec3::Y * 1.0, Vec3::Y);
+    let (dist, height) = (cam_mode.dist * cam_mode.zoom, cam_mode.height * cam_mode.zoom);
+    cam.translation = chase.update(&site, buggy.pos, buggy.forward(), dist, height, time.delta_secs().min(0.1));
+    cam.look_at(buggy.pos + Vec3::Y * camera::LOOK_Y, Vec3::Y);
 }
 
 fn hud(
@@ -613,6 +609,37 @@ fn hud(
     );
 }
 
+/// Chase-camera quality for the --log-every line: how often the terrain hid the buggy and how
+/// close the camera got to (or below) the ground.
+#[derive(Default)]
+struct CamStats {
+    frames: u32,
+    blocked: u32,
+    low: u32,
+    min_clear: f32,
+}
+
+impl CamStats {
+    fn add(&mut self, site: &Site, look: Vec3, cam: Vec3) {
+        if self.frames == 0 {
+            self.min_clear = f32::INFINITY;
+        }
+        self.frames += 1;
+        if camera::line_clearance(site, look, cam, 48) < 0.0 {
+            self.blocked += 1;
+        }
+        if let Some(g) = site.height(cam.x, cam.z) {
+            self.low += (cam.y - g < 0.5) as u32;
+            self.min_clear = self.min_clear.min(cam.y - g);
+        }
+    }
+
+    fn report(&self) -> String {
+        let pct = |n: u32| 100.0 * n as f32 / self.frames.max(1) as f32;
+        format!("cam_blocked={:.1}% cam_low={:.1}% cam_min_clear={:.2}", pct(self.blocked), pct(self.low), self.min_clear)
+    }
+}
+
 /// --shot / --seconds / periodic physics log.
 #[allow(clippy::too_many_arguments)]
 fn test_hooks(
@@ -624,8 +651,10 @@ fn test_hooks(
     render: Option<Res<TerrainRender>>,
     failed: Option<Res<LoadFailed>>,
     time: Res<Time<Real>>,
+    cam: Query<&Transform, With<Camera3d>>,
     mut next_log: Local<f32>,
     mut shot_taken: Local<bool>,
+    mut cam_stats: Local<CamStats>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if failed.is_some() && (args.shot.is_some() || args.seconds.is_some()) {
@@ -636,6 +665,9 @@ fn test_hooks(
         return; // still loading
     }
     let t = clock.now;
+    if let (Some(b), Some(site), Ok(c)) = (&buggy, &site, cam.single()) {
+        cam_stats.add(site, b.pos + Vec3::Y * camera::LOOK_Y, c.translation);
+    }
     if let (Some(b), Some(site)) = (&buggy, &site) {
         if args.log_every > 0.0 && t >= *next_log {
             *next_log = t + args.log_every;
@@ -643,7 +675,7 @@ fn test_hooks(
             let hag = g.map(|g| format!("{:.2}", b.pos.y - g)).unwrap_or_else(|| "nodata".into());
             let r = render.as_ref();
             info!(
-                "t={t:5.1} pos=({:.1},{:.1},{:.1}) speed={:.1}km/h wheels={} hag={hag} up_y={:.3} side={:.0} max_side_1s={:.0} rollovers={} respawns={} fine_chunks={} rebuilds={} build={:.1}ms swap={:.2}ms fps={:.0} {}",
+                "t={t:5.1} pos=({:.1},{:.1},{:.1}) speed={:.1}km/h wheels={} hag={hag} up_y={:.3} side={:.0} max_side_1s={:.0} rollovers={} respawns={} fine_chunks={} rebuilds={} build={:.1}ms swap={:.2}ms fps={:.0} {} {}",
                 b.pos.x,
                 b.pos.y,
                 b.pos.z,
@@ -660,6 +692,7 @@ fn test_hooks(
                 r.map_or(0.0, |r| r.swap_ms),
                 1.0 / time.delta_secs().max(1e-4),
                 b.log_extra(),
+                cam_stats.report(),
             );
         }
     }

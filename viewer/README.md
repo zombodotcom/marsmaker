@@ -251,6 +251,11 @@ modelled; one constant wind. Blowing-sand streamers are not done.
   edge melts into the sky.
 - **Camera**: HDR + TonyMcMapface + mild bloom, a little contrast grading, speed-based FOV
   (+14 deg towards boost speed), smoothed look-ahead and a short shake on hard landings.
+- **Chase camera** (`src/camera.rs`): tilts with the slope (low, looking up a dune face it
+  climbs; higher, looking down one it descends), rises over - or past ~58 deg pulls in in front
+  of - any terrain between it and the buggy, and keeps clear of the ground around it. Pulling in
+  is fast, easing back out slow. `--bench` scores it (`cam_*` fields, `old_cam_*` = the camera
+  before this, for comparison; `MM_BENCH_CAM_ZOOM` for zoomed-out views).
 - **Terrain**: the greyscale ortho is mapped through a Mars palette (dark basaltic sand ->
   brown sand -> ochre -> bright dust) instead of a single tint; close up a cosmetic wind-ripple
   normal and fine grain break up the texture (fades out by ~40 m).

@@ -22,12 +22,64 @@
 //! * slide (grounded, > 3 m/s): `slip_deg` mean body sideslip |angle between heading and
 //!   velocity|, `vlat` mean lateral slide speed (m/s), `slide10` share of time sliding > 10 deg
 //! * `us_per_step` - wall time per 120 Hz step
+//! * chase camera (default distance or `MM_BENCH_CAM_ZOOM`, run at 60 Hz; `old_cam_*` = the camera before it was made
+//!   terrain-aware, for comparison): `cam_blocked` share of frames with terrain between the
+//!   camera and the buggy's body, `cam_low` share with the camera < 0.5 m over the ground,
+//!   `cam_min_clear` lowest camera height over the ground (m, negative = inside it),
+//!   `cam_acc_rms` RMS camera acceleration (m/s^2, smoothness)
 
 use crate::buggy::{Buggy, Controls, Mode, Tuning};
 use crate::terrain::{LoadOptions, Progress, Source};
 use bevy::prelude::*;
 
 const DT: f32 = 1.0 / 120.0;
+
+/// Chase-camera scoring for one drive (see the module docs).
+#[derive(Default)]
+struct CamScore {
+    frames: f64,
+    blocked: f64,
+    low: f64,
+    min_clear: Option<f32>,
+    acc2: f64,
+    /// last two camera positions (newest first)
+    prev: Option<(Vec3, Option<Vec3>)>,
+}
+
+impl CamScore {
+    fn add(&mut self, site: &crate::terrain::Site, look: Vec3, cam: Vec3, dt: f32) {
+        self.frames += 1.0;
+        self.blocked += (crate::camera::line_clearance(site, look, cam, 48) < 0.0) as u8 as f64;
+        if let Some(g) = site.height(cam.x, cam.z) {
+            self.low += (cam.y - g < 0.5) as u8 as f64;
+            self.min_clear = Some(self.min_clear.map_or(cam.y - g, |m| m.min(cam.y - g)));
+        }
+        if let Some((p1, Some(p0))) = self.prev {
+            let a = (cam - 2.0 * p1 + p0) / (dt * dt);
+            self.acc2 += a.length_squared() as f64;
+        }
+        self.prev = Some((cam, self.prev.map(|p| p.0)));
+    }
+
+    fn json(&self, v: &mut serde_json::Value, prefix: &str) {
+        let n = self.frames.max(1.0);
+        v[format!("{prefix}cam_blocked")] = serde_json::json!(self.blocked / n);
+        v[format!("{prefix}cam_low")] = serde_json::json!(self.low / n);
+        v[format!("{prefix}cam_min_clear")] = serde_json::json!(self.min_clear);
+        v[format!("{prefix}cam_acc_rms")] = serde_json::json!((self.acc2 / n).sqrt());
+    }
+}
+
+/// The chase camera as it was before `camera.rs`: fixed offset behind, 1 m floor, lerp.
+fn old_cam(prev: Option<Vec3>, site: &crate::terrain::Site, b: &Buggy, zoom: f32, dt: f32) -> Vec3 {
+    let f = b.forward();
+    let flat = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::NEG_Z);
+    let mut want = b.pos - (flat * 9.0 - Vec3::Y * 3.2) * zoom;
+    if let Some(g) = site.height(want.x, want.z) {
+        want.y = want.y.max(g + 1.0);
+    }
+    prev.map_or(want, |p| p.lerp(want, 1.0 - (-dt * 5.0).exp()))
+}
 
 #[derive(Clone, Copy)]
 enum Steer {
@@ -138,6 +190,10 @@ fn run_one(site: &crate::terrain::Site, mode: Mode, gravity_mult: f32, p: &Patte
     let verbose = std::env::var("MM_BENCH_VERBOSE").is_ok();
     let mut rolls0 = 0;
     let mut hist: std::collections::VecDeque<String> = Default::default();
+    let (mut chase, mut cam_new, mut cam_old) = (crate::camera::ChaseCam::default(), CamScore::default(), CamScore::default());
+    let mut old_pos: Option<Vec3> = None;
+    // MM_BENCH_CAM_ZOOM: score the camera at this mouse-wheel zoom (default 1)
+    let cam_zoom = std::env::var("MM_BENCH_CAM_ZOOM").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0f32);
     let wall = std::time::Instant::now();
     for i in 0..n {
         let t = i as f32 * DT;
@@ -164,6 +220,23 @@ fn run_one(site: &crate::terrain::Site, mode: Mode, gravity_mult: f32, p: &Patte
             upside = 0.0;
         }
         b.step(site, &ctl, DT);
+        if b.respawns != respawns0 {
+            old_pos = None;
+            (cam_new.prev, cam_old.prev) = (None, None);
+        }
+        if i % 2 == 0 {
+            // the camera runs once per 60 Hz frame
+            let cdt = 2.0 * DT;
+            let c = chase.update(site, b.pos, b.forward(), 9.0 * cam_zoom, 3.2 * cam_zoom, cdt);
+            let o = old_cam(old_pos, site, &b, cam_zoom, cdt);
+            old_pos = Some(o);
+            if settle <= 0.0 {
+                // can the camera see the buggy's body (not just the point it aims at)?
+                let look = b.pos + Vec3::Y * 0.3;
+                cam_new.add(site, look, c, cdt);
+                cam_old.add(site, look, o, cdt);
+            }
+        }
         if b.respawns != respawns0 {
             if b.last_respawn == "physics blew up" {
                 nan += 1;
@@ -280,6 +353,8 @@ fn run_one(site: &crate::terrain::Site, mode: Mode, gravity_mult: f32, p: &Patte
         "slide_secs": nslide * DT as f64,
         "us_per_step": us,
     });
+    cam_new.json(&mut v, "");
+    cam_old.json(&mut v, "old_");
     if nwander > 0.0 {
         v["wander"] = serde_json::json!(rms(wander2, nwander).to_degrees());
     }
