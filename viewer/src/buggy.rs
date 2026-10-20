@@ -587,7 +587,7 @@ impl Buggy {
     /// Control help line for the HUD, per mode.
     pub fn hud_help(&self) -> &'static str {
         match self.tuning.mode {
-            Mode::Real => "W/S throttle  A/D steer  Space brake  R flip upright  M fun mode  C camera  Esc quit",
+            Mode::Real => "W/S throttle  A/D steer  Space brake  R flip upright  M fun mode  C camera  Esc menu",
             Mode::Fun => {
                 "W/S throttle  A/D steer  Space brake  Shift boost  Ctrl/J jump  air: W/S pitch A/D roll  R flip  M real  C cam  Esc"
             }

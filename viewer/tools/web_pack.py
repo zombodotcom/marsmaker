@@ -132,6 +132,16 @@ def main():
     a = ap.parse_args()
     for s in a.sites:
         pack(s, a.out, a.factor, a.max_mpix, not a.no_albedo)
+    write_site_list(a.out)
+
+
+def write_site_list(out_root):
+    """sites.json next to the page: every packed site, for the viewer's map menu."""
+    root = os.path.join(out_root, 'sites')
+    names = sorted(n for n in os.listdir(root) if os.path.isfile(os.path.join(root, n, 'meta.json')))
+    with open(os.path.join(out_root, 'sites.json'), 'w') as f:
+        json.dump(names, f, indent=1)
+    print(f'{len(names)} sites listed in {os.path.join(out_root, "sites.json")}')
 
 
 if __name__ == '__main__':

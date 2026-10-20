@@ -61,6 +61,7 @@ impl Plugin for VisualsPlugin {
                     .chain()
                     .before(TransformSystems::Propagate),
             );
+        app.add_systems(Update, reset_on_unload); // [menu] map change
     }
 }
 
@@ -1291,5 +1292,41 @@ pub fn sync_buggy(
         let steer = if i < 2 { buggy.steer } else { 0.0 };
         t.translation = buggy.pos + buggy.rot * off;
         t.rotation = buggy.rot * Quat::from_rotation_y(-steer) * Quat::from_rotation_x(-angle[i]);
+    }
+}
+
+/// [menu] Map change (menu::SiteUnloaded): forget the old site's terrain materials, tracks, dust
+/// and camera effects. The sky dome, particle pool and track meshes are kept and reused.
+fn reset_on_unload(
+    mut ev: MessageReader<crate::menu::SiteUnloaded>,
+    mut swap: ResMut<TerrainSwap>,
+    mut fx: ResMut<CamFx>,
+    tracks: Option<ResMut<Tracks>>,
+    dust: Option<ResMut<Dust>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut vis: Query<&mut Visibility, With<Fx>>,
+) {
+    if ev.read().count() == 0 {
+        return;
+    }
+    swap.0.clear();
+    *fx = CamFx::default();
+    if let Some(mut tr) = tracks {
+        for t in tr.list.iter_mut() {
+            t.pts.clear();
+            t.broken = true;
+            t.dirty = true;
+            if let Some(mut m) = meshes.get_mut(&t.mesh) {
+                m.insert_indices(Indices::U32(Vec::new()));
+            }
+        }
+    }
+    if let Some(mut d) = dust {
+        for p in d.parts.iter_mut() {
+            p.alive = false;
+            if let Ok(mut v) = vis.get_mut(p.e) {
+                *v = Visibility::Hidden;
+            }
+        }
     }
 }

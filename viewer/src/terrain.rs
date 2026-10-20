@@ -335,13 +335,14 @@ fn texture_image(px: Vec<u16>, w: usize, h: usize, name: &str) -> Option<(Image,
         level = next;
         (lw, lh) = (nw, nh);
     }
-    let mut img = Image::new(
+    // new_uninit + data: Image::new debug-asserts that the data is exactly the base level (no mips)
+    let mut img = Image::new_uninit(
         Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
-        data,
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
+    img.data = Some(data);
     img.texture_descriptor.mip_level_count = levels;
     img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor { anisotropy_clamp: 16, ..ImageSamplerDescriptor::linear() });
     Some((img, fill))
