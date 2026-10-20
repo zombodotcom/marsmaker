@@ -12,6 +12,8 @@
 //! A/D = steer, Space = brake, R = flip upright, M = REAL / FUN mode, C = toggle chase / high camera,
 //! Esc = quit; FUN mode adds Shift = boost, Ctrl/J = jump, W/S/A/D = pitch/roll in the air. See README.md for the flags.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod bench;
 mod buggy;
 mod live;
 mod terrain;
@@ -48,12 +50,21 @@ struct Args {
     shot_at: f32,
     log_every: f32,
     high_cam: bool,
+    /// test runs: small, unfocused, bottom-most window off the visible desktop, no taskbar entry
+    bg_window: bool,
     /// live mode: site id in live_index.json, the index file / URL, finest post spacing
     live: Option<String>,
     live_index: String,
     live_mpp: Option<f32>,
     /// native: stream the live site, write OUT.json + OUT.f32 (heights) and exit
     live_dump: Option<PathBuf>,
+    /// native: headless driving benchmark (see bench.rs), seconds per run, optional single mode
+    bench: bool,
+    /// terrain low-pass sigma (m), 0 = raw DTM
+    smooth: Option<f32>,
+    bench_seconds: f32,
+    bench_mode: Option<Mode>,
+    bench_patterns: Option<String>,
 }
 
 impl Args {
@@ -75,6 +86,7 @@ impl Args {
             shot_at: 3.0,
             log_every: 1.0,
             high_cam: false,
+            bg_window: false,
             live: None,
             #[cfg(not(target_arch = "wasm32"))]
             live_index: concat!(env!("CARGO_MANIFEST_DIR"), "/web/live_index.json").into(),
@@ -82,6 +94,11 @@ impl Args {
             live_index: "live_index.json".into(),
             live_mpp: None,
             live_dump: None,
+            bench: false,
+            smooth: None,
+            bench_seconds: 45.0,
+            bench_mode: None,
+            bench_patterns: None,
         };
         let mut it = argv.into_iter();
         let num = |s: Option<String>, flag: &str| -> f32 {
@@ -107,6 +124,8 @@ impl Args {
                 "--albedo" => a.albedo = true,
                 "--autodrive" => a.autodrive = true,
                 "--high-cam" => a.high_cam = true,
+                "--bg-window" => a.bg_window = true,
+                "--bench-patterns" => a.bench_patterns = Some(it.next().expect("--bench-patterns needs a list")),
                 "--weave" => a.weave = num(it.next(), "--weave"),
                 "--throttle" => a.throttle = num(it.next(), "--throttle"),
                 "--seconds" => a.seconds = Some(num(it.next(), "--seconds")),
@@ -117,6 +136,13 @@ impl Args {
                 "--live" => a.live = Some(it.next().expect("--live needs a site id")),
                 "--live-index" => a.live_index = it.next().expect("--live-index needs a path"),
                 "--live-mpp" => a.live_mpp = Some(num(it.next(), "--live-mpp")),
+                "--bench" => a.bench = true,
+                "--smooth" => a.smooth = Some(num(it.next(), "--smooth")),
+                "--bench-seconds" => a.bench_seconds = num(it.next(), "--bench-seconds"),
+                "--bench-mode" => {
+                    let v = it.next().expect("--bench-mode needs real or fun");
+                    a.bench_mode = Some(Mode::parse(&v).unwrap_or_else(|| panic!("--bench-mode {v}: use real or fun")));
+                }
                 "--live-dump" => a.live_dump = Some(PathBuf::from(it.next().expect("--live-dump needs a path"))),
                 f if f.starts_with("--") => panic!("unknown flag {f}"),
                 _ => a.site = s,
@@ -200,17 +226,36 @@ fn main() {
             }
         });
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    if args.bench {
+        let opts = LoadOptions { step: args.step, albedo: false, live_mpp: args.live_mpp, smooth_m: args.smooth };
+        std::process::exit(match bench::run(&args.site, opts, args.bench_seconds, args.gravity_mult, args.bench_mode, args.spawn, args.bench_patterns.as_deref()) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("bench failed: {e}");
+                1
+            }
+        });
+    }
+    let mut window = Window {
+        title: "MarsMaker - HiRISE dune buggy".into(),
+        resolution: (1280, 720).into(),
+        canvas: Some("#bevy".into()),
+        fit_canvas_to_parent: true,
+        ..default()
+    };
+    if args.bg_window {
+        // automated test runs shouldn't pop up over whatever the user is doing
+        window.title = "MarsMaker (test run)".into();
+        window.resolution = (640, 360).into();
+        window.position = WindowPosition::At(IVec2::new(-4000, -4000));
+        window.focused = false;
+        window.window_level = bevy::window::WindowLevel::AlwaysOnBottom;
+        window.skip_taskbar = true;
+        window.decorations = false;
+    }
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "MarsMaker - HiRISE dune buggy".into(),
-                resolution: (1280, 720).into(),
-                canvas: Some("#bevy".into()),
-                fit_canvas_to_parent: true,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
         .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0, zoom: 1.0 } } else { CamMode { dist: 9.0, height: 3.2, zoom: 1.0 } })
         .insert_resource(args)
         .insert_resource(ClearColor(Color::srgb(0.80, 0.62, 0.47)))
@@ -278,7 +323,7 @@ fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh
         None => Source::new(args.site.clone()),
     };
     let progress = Progress::default();
-    let opts = LoadOptions { step: args.step, albedo: args.albedo, live_mpp: args.live_mpp };
+    let opts = LoadOptions { step: args.step, albedo: args.albedo, live_mpp: args.live_mpp, smooth_m: args.smooth };
     let task = IoTaskPool::get().spawn(terrain::load(src.clone(), opts, progress.clone()));
     commands.insert_resource(Loading { task, progress, name: src.name() });
 

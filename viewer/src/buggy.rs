@@ -1,6 +1,7 @@
 //! Dune buggy: a rigid body on four raycast spring/damper wheels with a friction-circle tire model,
-//! under Mars gravity. Ground contact is against the full-resolution DTM heightfield, so every 1 m
-//! post is felt. Local axes: +X right, +Y up, -Z forward.
+//! under Mars gravity. Ground contact is against the full-resolution DTM heightfield (despiked and
+//! low-passed at about its true resolution, see `terrain::condition_heights`), felt through a
+//! multi-point tire footprint. Local axes: +X right, +Y up, -Z forward.
 
 use crate::terrain::Site;
 use bevy::prelude::*;
@@ -16,16 +17,29 @@ const COM: Vec3 = Vec3::new(0.0, -0.45, 0.0);
 /// Principal moments of inertia about the CoM (kg m^2): pitch (X), yaw (Y), roll (Z). Chassis box
 /// plus four ~20 kg wheel/hub assemblies 1 m out, which matter most for roll.
 const INERTIA: Vec3 = Vec3::new(380.0, 450.0, 190.0);
-const K_ARB: f32 = 7000.0; // anti-roll bar rate per axle, N per m of left/right compression difference
-const ROLL_CENTRE_H: f32 = 0.25; // height above the contact patch where tire forces act (m)
 const WHEEL_R: f32 = 0.42;
-const REST: f32 = 0.55; // suspension rest length
-const TRAVEL: f32 = 0.45; // max compression before the bump stop
-const K: f32 = 9000.0; // spring N/m
-const C: f32 = 1300.0; // damper N/(m/s)
+/// suspension length (mount to hub) at static ride height: CoM ~0.67 m above flat ground. The
+/// rest (full droop) length is this plus the static sag, so the ride height doesn't depend on the
+/// spring rate or gravity.
+const STATIC_LEN: f32 = 0.507;
+/// length where the bump stop starts
+const BUMP_LEN: f32 = 0.10;
+/// bump stop: N per m of compression past the travel (very stiff)
+const K_BUMP: f32 = 72000.0;
+/// sprung mass per corner (kg), for the damping ratios
+const CORNER_MASS: f32 = MASS / 4.0;
 const BRAKE: f32 = 3500.0;
 const STEER_MAX: f32 = 0.55;
+/// wheelbase (m), for the kinematic yaw rate / speed-sensitive steering
+const WHEELBASE: f32 = 2.45;
+/// keyboard steering: how fast the front wheels turn toward the target / back to centre (rad/s)
+const STEER_RATE: f32 = 1.6;
+const STEER_RETURN: f32 = 3.0;
 const SUBSTEPS: usize = 4;
+/// tire footprint: offsets (m) along the wheel's heading where the tread is tested against the
+/// ground, so the tire rolls *onto* a step (its round profile meets the edge early) instead of a
+/// point contact taking it as a hard kick
+const TREAD: [f32; 6] = [-0.3, -0.2, -0.1, 0.1, 0.2, 0.3];
 /// seconds the chassis centre may hang over nodata before we respawn
 const OFF_DATA_GRACE: f32 = 0.4;
 /// how often a "known good" pose is recorded, and how many are kept
@@ -48,6 +62,9 @@ const AIR_PITCH_RATE: f32 = 3.0;
 const AIR_ROLL_RATE: f32 = 3.5;
 const AIR_GAIN: f32 = 4.0;
 const AIR_CONTROL_AFTER: f32 = 0.12; // s airborne before air control engages (not on every bump)
+/// until you use air control in a jump, the pitch / roll tumble a crest kicked in is damped at
+/// this rate (1/s), so flying off a dune at speed lands on the wheels instead of the roof
+const AIR_STEADY: f32 = 1.5;
 /// soft landings: self-righting toward the ground normal (angular accel per unit sin(tilt)),
 /// strong for LAND_WINDOW s after touching down, gentle otherwise. Not applied beyond
 /// LAND_EXTREME (chassis up . ground normal), i.e. a roof / side landing still tips over.
@@ -126,12 +143,32 @@ pub struct Tuning {
     slip_falloff: f32, // fraction of grip lost at full slip
     engine: f32,       // N at the wheels, all-wheel drive
     vmax: f32,         // m/s where engine force tapers to zero
+    /// friction is computed on load x grip_mult (FUN: an Earth-like grip under Mars gravity)
+    grip_mult: f32,
+    /// friction circle: lateral force first, drive / brake get what's left (FUN)
+    lat_priority: bool,
+    /// lateral acceleration (m/s^2) the speed-sensitive steering limit is set for
+    steer_alat: f32,
+    /// yaw assist toward the kinematic yaw rate (1/s, FUN only; 0 = off)
+    yaw_assist: f32,
+    roll_centre: f32, // height above the contact patch where tire forces act (m)
+    // suspension (both modes)
+    k: f32,         // spring N/m
+    k3: f32,        // progressive (cubic) spring term N/m^3
+    c_stop: f32,    // bump stop damping N/(m/s) (so it soaks up a hit instead of bouncing)
+    /// derived: rest (full droop) length and compression travel to the bump stop (m)
+    rest: f32,
+    travel: f32,
+    zeta_bump: f32, // damping ratio in compression
+    zeta_reb: f32,  // damping ratio in rebound
+    k_arb: f32,     // anti-roll bar rate per axle, N per m of left/right compression difference
+    envelope: bool, // tire footprint (TREAD) instead of a point contact
 }
 
 impl Tuning {
     pub fn new(mode: Mode, gravity_mult: f32) -> Self {
         let gravity_mult = if gravity_mult.is_finite() && gravity_mult > 0.0 { gravity_mult } else { 1.0 };
-        match mode {
+        let mut t = match mode {
             Mode::Real => Self {
                 mode,
                 gravity_mult,
@@ -143,6 +180,12 @@ impl Tuning {
                 slip_falloff: 0.3,
                 engine: 2600.0,
                 vmax: 26.0,
+                grip_mult: 1.0,
+                lat_priority: false,
+                steer_alat: 0.58 * MARS_G * gravity_mult * 1.6,
+                yaw_assist: 0.0,
+                roll_centre: 0.25,
+                ..Self::suspension(mode, gravity_mult)
             },
             Mode::Fun => Self {
                 mode,
@@ -155,7 +198,94 @@ impl Tuning {
                 slip_falloff: 0.0,
                 engine: 4200.0,
                 vmax: 40.0,
+                grip_mult: 2.2,
+                lat_priority: true,
+                steer_alat: 1.1 * MARS_G * gravity_mult * 2.2 * 1.3,
+                yaw_assist: 3.0,
+                roll_centre: 0.35,
+                ..Self::suspension(mode, gravity_mult)
             },
+        };
+        t.apply_overrides();
+        // static sag: k x + k3 x^3 = corner weight (Newton)
+        let w = CORNER_MASS * t.gravity();
+        let mut x = w / t.k;
+        for _ in 0..8 {
+            x -= (t.k * x + t.k3 * x * x * x - w) / (t.k + 3.0 * t.k3 * x * x);
+        }
+        t.rest = STATIC_LEN + x.clamp(0.0, 0.4);
+        t.travel = t.rest - BUMP_LEN;
+        t
+    }
+
+    /// Suspension shared by both modes (other fields are placeholders, overwritten by `new`).
+    fn suspension(mode: Mode, gravity_mult: f32) -> Self {
+        Self {
+            mode,
+            gravity_mult,
+            mu: 0.0,
+            mu_lat: 0.0,
+            corner: 0.0,
+            roll_visc: 0.0,
+            roll_crr: 0.0,
+            slip_falloff: 0.0,
+            engine: 0.0,
+            vmax: 1.0,
+            grip_mult: 1.0,
+            lat_priority: false,
+            steer_alat: 1.0,
+            yaw_assist: 0.0,
+            roll_centre: 0.25,
+            // ~0.15 m static sag under Mars gravity (390 N per corner), ~0.4 m of bump travel,
+            // rising rate so big landings are absorbed before the bump stop; ~0.8 Hz heave
+            k: 2600.0,
+            k3: 34000.0,
+            c_stop: 4000.0,
+            rest: 0.0,
+            travel: 0.0,
+            zeta_bump: 0.35,
+            zeta_reb: 1.0,
+            k_arb: 2500.0,
+            envelope: true,
+        }
+    }
+
+    /// Developer hook (native): `MM_TUNE="k=3000,fun.zeta_bump=0.4"` overrides tuning fields
+    /// (optionally for one mode), for benchmark sweeps without a rebuild.
+    fn apply_overrides(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(spec) = std::env::var("MM_TUNE") {
+            for kv in spec.split(',').filter(|s| !s.is_empty()) {
+                let Some((k, v)) = kv.split_once('=') else { continue };
+                let Ok(v) = v.trim().parse::<f32>() else { continue };
+                let k = k.trim();
+                let (k, only) = match k.split_once('.') {
+                    Some((m, k)) => (k, Mode::parse(m)),
+                    None => (k, None),
+                };
+                if only.is_some_and(|m| m != self.mode) {
+                    continue;
+                }
+                match k {
+                    "mu" => self.mu = v,
+                    "mu_lat" => self.mu_lat = v,
+                    "corner" => self.corner = v,
+                    "engine" => self.engine = v,
+                    "grip_mult" => self.grip_mult = v,
+                    "lat_priority" => self.lat_priority = v != 0.0,
+                    "steer_alat" => self.steer_alat = v,
+                    "yaw_assist" => self.yaw_assist = v,
+                    "roll_centre" => self.roll_centre = v,
+                    "k" => self.k = v,
+                    "k3" => self.k3 = v,
+                    "c_stop" => self.c_stop = v,
+                    "zeta_bump" => self.zeta_bump = v,
+                    "zeta_reb" => self.zeta_reb = v,
+                    "k_arb" => self.k_arb = v,
+                    "envelope" => self.envelope = v != 0.0,
+                    _ => eprintln!("MM_TUNE: unknown field {k}"),
+                }
+            }
         }
     }
     pub fn fun(&self) -> bool {
@@ -259,6 +389,8 @@ pub struct Buggy {
     pub wheel_len: [f32; 4], // current suspension length (for visuals)
     pub wheel_spin: [f32; 4],
     pub grounded: usize,
+    /// fraction of the last step's substeps with all four wheels on the ground (bench metric)
+    pub ground4: f32,
     pub tuning: Tuning,
     /// recent poses known to be on good ground: (ground point, yaw), oldest first
     safe: Vec<(Vec3, f32)>,
@@ -295,6 +427,8 @@ pub struct Buggy {
     /// changed (air control needs a fresh press, so holding W over a crest doesn't flip you)
     air_held: [i8; 2],
     air_armed: [bool; 2],
+    /// air control used in this jump (then the tumble is the player's, not damped)
+    air_used: bool,
     land_t: f32,
     pub last_jump: Option<Jump>,
     pub best: Jump,
@@ -315,9 +449,10 @@ impl Buggy {
             rot: Quat::IDENTITY,
             ang: Vec3::ZERO,
             steer: 0.0,
-            wheel_len: [REST; 4],
+            wheel_len: [tuning.rest; 4],
             wheel_spin: [0.0; 4],
             grounded: 0,
+            ground4: 0.0,
             tuning,
             safe: Vec::new(),
             safe_t: 0.0,
@@ -343,6 +478,7 @@ impl Buggy {
             air_roll: 0.0,
             air_held: [0; 2],
             air_armed: [false; 2],
+            air_used: false,
             land_t: 0.0,
             last_jump: None,
             best: Jump::default(),
@@ -366,7 +502,7 @@ impl Buggy {
         self.vel = Vec3::ZERO;
         self.ang = Vec3::ZERO;
         self.steer = 0.0;
-        self.wheel_len = [REST; 4];
+        self.wheel_len = [self.tuning.rest; 4];
         self.grounded = 0;
         self.off_data = 0.0;
         // a teleport isn't a jump
@@ -513,8 +649,14 @@ impl Buggy {
 
     pub fn step(&mut self, site: &Site, ctl: &Controls, dt: f32) {
         let h = dt / SUBSTEPS as f32;
-        let target_steer = ctl.steer * STEER_MAX / (1.0 + self.vel.length() * 0.06);
-        self.steer += (target_steer - self.steer) * (dt * 6.0).min(1.0);
+        // speed-sensitive lock: no more than the tires can turn (kinematic lateral acceleration
+        // v^2 tan(d) / L up to steer_alat), and a keyboard-friendly rate limit
+        let v2 = self.vel.length_squared();
+        let lock = STEER_MAX.min((WHEELBASE * self.tuning.steer_alat / v2.max(1e-3)).atan());
+        let target_steer = ctl.steer.clamp(-1.0, 1.0) * lock;
+        let returning = target_steer.abs() < self.steer.abs() || target_steer * self.steer < 0.0;
+        let rate = if returning { STEER_RETURN } else { STEER_RATE } * dt;
+        self.steer += (target_steer - self.steer).clamp(-rate, rate);
         self.msg_t = (self.msg_t - dt).max(0.0);
         let fun = self.tuning.fun();
 
@@ -546,15 +688,19 @@ impl Buggy {
             if self.touching {
                 self.air_held[i] = keys[i];
                 self.air_armed[i] = false;
+                self.air_used = false;
             } else if keys[i] != self.air_held[i] {
                 self.air_armed[i] = true;
             }
         }
         self.touching = false;
+        let mut n4 = 0;
         for _ in 0..SUBSTEPS {
             self.substep(site, ctl, h);
             self.touching |= self.grounded > 0 || self.body_contact;
+            n4 += (self.grounded == 4) as usize;
         }
+        self.ground4 = n4 as f32 / SUBSTEPS as f32;
         self.check_bounds(site, dt);
         self.track_slope(site, dt);
         self.track_stunts(site, dt);
@@ -701,7 +847,7 @@ impl Buggy {
     }
 
     /// FUN mode only. Airborne: W/S pitch and A/D roll steer the spin toward a target rate (no
-    /// input keeps the current spin, so flips carry on). Touching: a righting push toward the
+    /// input keeps the current spin, so flips carry on; before any input the tumble is damped). Touching: a righting push toward the
     /// ground normal, strong just after a landing (which also soaks up the tumble), gentle while
     /// driving; none past LAND_EXTREME, so a roof landing still ends on the roof (auto-flip).
     fn fun_assists(&mut self, site: &Site, ctl: &Controls, up: Vec3, h: f32) {
@@ -713,9 +859,16 @@ impl Buggy {
             let g = (AIR_GAIN * h).min(1.0);
             if self.air_armed[0] && ctl.throttle != 0.0 {
                 wl.x += (-ctl.throttle * AIR_PITCH_RATE - wl.x) * g; // W = nose down
+                self.air_used = true;
             }
             if self.air_armed[1] && ctl.steer != 0.0 {
                 wl.z += (-ctl.steer * AIR_ROLL_RATE - wl.z) * g; // D = roll right
+                self.air_used = true;
+            }
+            if !self.air_used {
+                let k = 1.0 - (AIR_STEADY * h).min(1.0);
+                wl.x *= k;
+                wl.z *= k;
             }
             self.ang = self.rot * wl;
             return;
@@ -760,18 +913,25 @@ impl Buggy {
         let mut hits: [Option<Hit>; 4] = [None, None, None, None];
         for (i, off) in WHEELS.iter().enumerate() {
             let mount = self.pos + self.rot * (*off - COM);
-            self.wheel_len[i] = REST;
-            let Some(dist) = ray_down(site, mount, up) else { continue };
+            self.wheel_len[i] = tu.rest;
+            let Some(mut dist) = ray_down(site, mount, up) else { continue };
+            if tu.envelope {
+                let steer = if i < 2 { self.steer } else { 0.0 };
+                let f = self.rot * (Quat::from_rotation_y(-steer) * Vec3::NEG_Z);
+                dist -= tread_lift(site, mount - up * dist, f, up);
+            }
             let len = dist - WHEEL_R;
-            if len >= REST {
+            if len >= tu.rest {
                 continue;
             }
-            self.wheel_len[i] = len.max(REST - TRAVEL);
-            hits[i] = Some(Hit { contact: mount - up * dist, compression: REST - len, len });
+            self.wheel_len[i] = len.max(BUMP_LEN);
+            hits[i] = Some(Hit { contact: mount - up * dist, compression: tu.rest - len, len });
         }
         // anti-roll bars: the more compressed wheel of an axle pushes up harder, the other less
-        let comp = |i: usize| hits[i].as_ref().map_or(0.0, |h| h.compression.min(TRAVEL));
-        let arb = [comp(0) - comp(1), comp(2) - comp(3)].map(|d| d * K_ARB);
+        let comp = |i: usize| hits[i].as_ref().map_or(0.0, |h| h.compression.min(tu.travel));
+        let arb = [comp(0) - comp(1), comp(2) - comp(3)].map(|d| d * tu.k_arb);
+        let c_crit = 2.0 * (tu.k * CORNER_MASS).sqrt();
+        let fwd_body = self.forward();
 
         for i in 0..4 {
             let Some(hit) = &hits[i] else { continue };
@@ -780,10 +940,20 @@ impl Buggy {
             let n = site.contact_normal(contact.x, contact.z);
             let v = self.vel + self.ang.cross(contact - self.pos);
 
-            // suspension (plus a stiff bump stop once travel is used up) + anti-roll bar share
-            let bump = (REST - TRAVEL - len).max(0.0) * K * 8.0;
+            // progressive spring, a stiff bump stop once travel is used up, anti-roll bar share,
+            // and a damper softer in compression (bumps) than in rebound (no pogo)
+            let x = hit.compression.min(tu.travel);
+            // capped: with the car on its side a mount can end up below the ground, and an
+            // unbounded stop force would fire it off like a spring gun
+            let into_stop = (BUMP_LEN - len).clamp(0.0, 0.1);
+            let bump = into_stop * K_BUMP;
             let bar = arb[i / 2] * if i % 2 == 0 { 1.0 } else { -1.0 };
-            let fs = (K * hit.compression + bump + bar - C * v.dot(up)).max(0.0);
+            let vc = -v.dot(up); // compression speed
+            let mut damp = vc * c_crit * if vc > 0.0 { tu.zeta_bump } else { tu.zeta_reb };
+            if into_stop > 0.0 {
+                damp += vc * tu.c_stop;
+            }
+            let fs = (tu.k * x + tu.k3 * x * x * x + bump + bar + damp).max(0.0);
             let load = fs * up.dot(n).max(0.0);
             apply(up * fs, contact, &mut force, &mut torque);
 
@@ -804,24 +974,36 @@ impl Buggy {
             if ctl.throttle == 0.0 && !ctl.brake && v_long.abs() < 1.0 {
                 f_long -= v_long * 3000.0; // idle hold (engine braking / handbrake) so it settles on slopes
             }
-            let f_lat = -v_lat * tu.corner / 4.0;
-            // friction ellipse (a circle in arcade mode, where mu == mu_lat)
-            let k = ((f_long / (tu.mu * load).max(1e-3)).powi(2) + (f_lat / (tu.mu_lat * load).max(1e-3)).powi(2)).sqrt();
-            let mut ft = fwd * f_long + right * f_lat;
-            if k > 1.0 {
-                // sliding: grip falls off with the overload (slip_falloff = 0 in arcade mode)
-                let slip = (k - 1.0).clamp(0.0, 1.0);
-                ft *= (1.0 - tu.slip_falloff * slip) / k;
+            let mut f_lat = -v_lat * tu.corner / 4.0;
+            let grip = load * tu.grip_mult;
+            let (cap_long, cap_lat) = ((tu.mu * grip).max(1e-3), (tu.mu_lat * grip).max(1e-3));
+            let ft;
+            if tu.lat_priority {
+                // FUN: cornering grip first, drive and brakes use what's left of the circle, so
+                // flooring it doesn't wash the car out sideways (it goes where it's pointed)
+                f_lat = f_lat.clamp(-cap_lat, cap_lat);
+                let rem = cap_long * (1.0 - (f_lat / cap_lat).powi(2)).max(0.0).sqrt();
+                ft = fwd * f_long.clamp(-rem, rem) + right * f_lat;
+            } else {
+                // friction ellipse; sliding grip falls off with the overload (slip_falloff)
+                let k = ((f_long / cap_long).powi(2) + (f_lat / cap_lat).powi(2)).sqrt();
+                let mut f = fwd * f_long + right * f_lat;
+                if k > 1.0 {
+                    let slip = (k - 1.0).clamp(0.0, 1.0);
+                    f *= (1.0 - tu.slip_falloff * slip) / k;
+                }
+                ft = f;
             }
             // Tire forces act through the suspension links, so their roll moment on the sprung
             // mass is about the roll centre, not the contact patch. Applying them at the patch
             // (a ground-level roll centre) exaggerates "tripping"; a double-wishbone buggy's roll
             // centre sits ~0.25 m above ground, so the horizontal tire force is applied there.
-            apply(ft, contact + up * ROLL_CENTRE_H, &mut force, &mut torque);
+            apply(ft, contact + up * tu.roll_centre, &mut force, &mut torque);
             self.wheel_spin[i] += v_long / WHEEL_R * h;
         }
 
         // chassis corners: penalty contact so a roll-over slides instead of falling through
+        let inv_i = self.inv_inertia_world();
         for sx in [-1.0, 1.0] {
             for sy in [-1.0, 1.0] {
                 for sz in [-1.0, 1.0] {
@@ -834,7 +1016,14 @@ impl Buggy {
                         let v = self.vel + self.ang.cross(p - self.pos);
                         let fn_ = (pen * 60000.0 - v.dot(n) * 4000.0).max(0.0);
                         let vt = v - n * v.dot(n);
-                        let ff = -vt.normalize_or_zero() * (fn_ * 0.6).min(vt.length() * MASS / h / 8.0);
+                        // friction no stronger than what stops the corner in one substep, using
+                        // the corner's effective mass (rotation makes it far lighter than the
+                        // whole car), split between up to 4 touching corners - otherwise it
+                        // overshoots and the body can spin up explosively when lying on its side
+                        let t_dir = vt.normalize_or_zero();
+                        let rxt = (p - self.pos).cross(t_dir);
+                        let m_eff = 1.0 / (1.0 / MASS + rxt.dot(inv_i * rxt));
+                        let ff = -t_dir * (fn_ * 0.6).min(vt.length() * m_eff / h * 0.25);
                         apply(n * fn_ + ff, p, &mut force, &mut torque);
                     }
                 }
@@ -846,11 +1035,38 @@ impl Buggy {
         self.ang *= 1.0 - 0.3 * h; // a little angular damping
         if tu.fun() {
             self.fun_assists(site, ctl, up, h);
+            if tu.yaw_assist > 0.0 && self.grounded >= 3 {
+                // yaw stability: pull the yaw rate toward what the steering asks for (the
+                // kinematic v tan(d) / L, capped at what the grip can hold), so it neither spins
+                // out nor ploughs on. Steer > 0 (right) is a negative yaw about +up.
+                let v_long = self.vel.dot(fwd_body);
+                let cap = tu.steer_alat / self.vel.length().max(1.0);
+                let target = -(v_long * self.steer.tan() / WHEELBASE).clamp(-cap, cap);
+                let yaw = self.ang.dot(up);
+                self.ang += up * ((target - yaw) * (tu.yaw_assist * h).min(1.0));
+            }
         }
         self.pos += self.vel * h;
         let w = self.ang;
         self.rot = (self.rot + Quat::from_xyzw(w.x, w.y, w.z, 0.0) * self.rot * (0.5 * h)).normalize();
     }
+}
+
+/// How much higher (along the suspension axis) the tire's round tread meets the ground than the
+/// point under the hub: the tread at offset dx along the wheel heading sits R - sqrt(R^2 - dx^2)
+/// above the bottom point, so a rise within the footprint lifts the wheel before the hub is over
+/// it. Smooths steps into ramps the way a real tire envelops them.
+fn tread_lift(site: &Site, contact: Vec3, wheel_fwd: Vec3, up: Vec3) -> f32 {
+    let f = Vec3::new(wheel_fwd.x, 0.0, wheel_fwd.z).normalize_or_zero();
+    let Some(h0) = site.height(contact.x, contact.z) else { return 0.0 };
+    let mut lift = 0.0f32;
+    for dx in TREAD {
+        let p = contact + f * dx;
+        if let Some(hp) = site.height(p.x, p.z) {
+            lift = lift.max(hp - h0 - (WHEEL_R - (WHEEL_R * WHEEL_R - dx * dx).sqrt()));
+        }
+    }
+    lift / up.y.max(0.5)
 }
 
 /// Distance from `mount` down the suspension axis (-`up`) to the ground: intersect the ray with

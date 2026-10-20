@@ -354,7 +354,13 @@ pub struct LoadOptions {
     pub albedo: bool,
     /// live mode: finest post spacing to stream (metres; default ~2)
     pub live_mpp: Option<f32>,
+    /// contact-surface low-pass sigma in metres (None = SMOOTH_M, 0 = raw DTM); see
+    /// `condition_heights`
+    pub smooth_m: Option<f32>,
 }
+
+/// Default Gaussian sigma of the terrain low-pass (m): about the DTM's true ~3 m resolution.
+pub const SMOOTH_M: f32 = 2.0;
 
 pub struct LoadedTile {
     pub row: usize,
@@ -505,12 +511,10 @@ pub async fn load_grid(src: &Source, opts: LoadOptions, progress: &Progress) -> 
     }
 }
 
-/// Load a whole site (heights, textures, decimated meshes). Runs as an async task.
-pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<Loaded, String> {
-    let t0 = bevy::platform::time::Instant::now();
-    let g = load_grid(&src, opts, &progress).await?;
+/// Heightfield of a grid -> physics `Site` (with the automatic spawn). Returns the site, the
+/// grid's tiles (texture sources) and the tile step in posts.
+pub fn site_from_grid(g: Grid, opts: LoadOptions, progress: &Progress) -> (Site, Vec<GridTile>, usize) {
     let (w, h, step_px) = (g.w, g.h, g.tile_step);
-    let n_tiles = g.tiles.len();
     let min_y = g.z.iter().copied().filter(|v| v.is_finite()).fold(f32::INFINITY, f32::min);
     let chunk = pick_chunk(step_px);
     let mut site = Site {
@@ -531,8 +535,36 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
         sun: g.sun,
         texture_kind: g.texture_kind,
     };
-    say(&progress, "choosing a spawn in the dunes".into());
+    say(progress, "choosing a spawn in the dunes".into());
+    // the spawn picker's artefact filters (steep noise, planar TIN facets) need the raw DTM
     site.spawn = pick_spawn(&site, g.quantum);
+    let sigma = opts.smooth_m.unwrap_or(SMOOTH_M).max(0.0);
+    if sigma > 0.0 {
+        say(progress, "smoothing the DTM noise".into());
+        let t0 = bevy::platform::time::Instant::now();
+        let z = Arc::get_mut(&mut site.z).expect("site heights are not shared yet");
+        let spikes = condition_heights(z, w, h, site.mpp, sigma);
+        info!("terrain: despiked {spikes} posts, Gaussian low-pass sigma {sigma:.1} m in {:.1}s", t0.elapsed().as_secs_f32());
+        if let Some(y) = site.height(site.spawn.x, site.spawn.z) {
+            site.spawn.y = y;
+        }
+    }
+    (site, g.tiles, step_px)
+}
+
+/// Heightfield only (no textures or meshes): for the headless `--bench`.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn load_site(src: &Source, opts: LoadOptions, progress: &Progress) -> Result<Site, String> {
+    let g = load_grid(src, opts, progress).await?;
+    Ok(site_from_grid(g, opts, progress).0)
+}
+
+/// Load a whole site (heights, textures, decimated meshes). Runs as an async task.
+pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<Loaded, String> {
+    let t0 = bevy::platform::time::Instant::now();
+    let g = load_grid(&src, opts, &progress).await?;
+    let (site, grid_tiles, step_px) = site_from_grid(g, opts, &progress);
+    let (n_tiles, chunk) = (grid_tiles.len(), site.chunk);
 
     // mesh step: keep the whole site under the vertex budget; physics always uses full
     // resolution (and the chunks near the buggy are drawn at full resolution too)
@@ -542,7 +574,7 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
     });
     let per_tile = step_px / chunk;
     let mut tiles = Vec::with_capacity(n_tiles);
-    for (i, t) in g.tiles.into_iter().enumerate() {
+    for (i, t) in grid_tiles.into_iter().enumerate() {
         say(&progress, format!("textures + meshes {}/{n_tiles}", i + 1));
         let texture = match t.tex {
             Tex::File(f) => match src.read(&f).await {
@@ -570,6 +602,140 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
     Ok(Loaded { site, step, tile_step_px: step_px, tiles })
 }
 
+
+/// Contact-surface conditioning of a raw DTM grid (heights in place, NaN = nodata).
+///
+/// HiRISE DTMs are posted at ~1 m but their true resolution is ~3 m (stereo correlation window),
+/// so the top octave is mostly matching noise, isolated spikes and the creases of flat TIN facets.
+/// Driven at 1:1 every one of those is a hard kick into a point-contact wheel. Two steps:
+///  1. despike: a post more than `SPIKE_M` above the highest (or below the lowest) of its 8
+///     neighbours is replaced with their mean (real terrain can't make a 1-post peak or pit);
+///  2. a Gaussian low-pass with sigma `sigma_m` metres (normalised over valid posts, so nodata
+///     edges don't sag), i.e. a low-pass at about the DTM's true resolution.
+/// Render meshes and physics both use the result, so the wheels sit exactly on what's drawn.
+/// Returns the number of despiked posts.
+pub fn condition_heights(z: &mut Vec<f32>, w: usize, h: usize, mpp: f32, sigma_m: f32) -> usize {
+    const SPIKE_M: f32 = 0.35;
+    let sigma = sigma_m / mpp; // posts
+    let rad = if sigma >= 0.25 { (sigma * 2.5).ceil() as usize } else { 0 };
+    let kernel: Vec<f32> = (0..=rad).map(|i| (-(i as f32).powi(2) / (2.0 * sigma * sigma).max(1e-6)).exp()).collect();
+    let src = std::mem::take(z);
+    let mut out = vec![f32::NAN; w * h];
+    let threads = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 16)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            1
+        }
+    };
+    let band = 128usize; // rows per work item (keeps per-thread buffers small)
+    let spikes = std::sync::atomic::AtomicUsize::new(0);
+    let work = |r0: usize, dst: &mut [f32]| {
+        let r1 = (r0 + band).min(h);
+        let halo = rad + 1;
+        let (a0, a1) = (r0.saturating_sub(halo), (r1 + halo).min(h));
+        let rows = a1 - a0;
+        // despiked copy of the band (+ halo)
+        let mut d = vec![f32::NAN; rows * w];
+        let mut n_sp = 0;
+        for r in a0..a1 {
+            for c in 0..w {
+                let v = src[r * w + c];
+                let mut val = v;
+                if v.is_finite() && r > 0 && c > 0 && r + 1 < h && c + 1 < w {
+                    let (mut mx, mut mn, mut sum, mut n) = (f32::NEG_INFINITY, f32::INFINITY, 0.0, 0);
+                    for (dr, dc) in [(-1i64, -1i64), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)] {
+                        let q = src[(r as i64 + dr) as usize * w + (c as i64 + dc) as usize];
+                        if q.is_finite() {
+                            mx = mx.max(q);
+                            mn = mn.min(q);
+                            sum += q;
+                            n += 1;
+                        }
+                    }
+                    if n >= 6 && (v > mx + SPIKE_M || v < mn - SPIKE_M) {
+                        val = sum / n as f32;
+                        if r >= r0 && r < r1 {
+                            n_sp += 1;
+                        }
+                    }
+                }
+                d[(r - a0) * w + c] = val;
+            }
+        }
+        spikes.fetch_add(n_sp, std::sync::atomic::Ordering::Relaxed);
+        if rad == 0 {
+            for r in r0..r1 {
+                dst[(r - r0) * w..(r - r0 + 1) * w].copy_from_slice(&d[(r - a0) * w..(r - a0 + 1) * w]);
+            }
+            return;
+        }
+        // horizontal pass: numerator (weighted heights) and denominator (weights of valid posts)
+        let mut num = vec![0.0f32; rows * w];
+        let mut den = vec![0.0f32; rows * w];
+        for rr in 0..rows {
+            let row = &d[rr * w..(rr + 1) * w];
+            for c in 0..w {
+                let (mut s, mut k) = (0.0, 0.0);
+                let lo = c.saturating_sub(rad);
+                let hi = (c + rad).min(w - 1);
+                for cc in lo..=hi {
+                    let q = row[cc];
+                    if q.is_finite() {
+                        let wt = kernel[cc.abs_diff(c)];
+                        s += wt * q;
+                        k += wt;
+                    }
+                }
+                num[rr * w + c] = s;
+                den[rr * w + c] = k;
+            }
+        }
+        // vertical pass over the band's own rows
+        for r in r0..r1 {
+            let rr = r - a0;
+            let lo = rr.saturating_sub(rad);
+            let hi = (rr + rad).min(rows - 1);
+            for c in 0..w {
+                if !d[rr * w + c].is_finite() {
+                    continue; // nodata stays nodata
+                }
+                let (mut s, mut k) = (0.0, 0.0);
+                for q in lo..=hi {
+                    let wt = kernel[q.abs_diff(rr)];
+                    s += wt * num[q * w + c];
+                    k += wt * den[q * w + c];
+                }
+                dst[(r - r0) * w + c] = s / k;
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let queue = std::sync::Mutex::new(out.chunks_mut(band * w).enumerate().collect::<Vec<_>>());
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                sc.spawn(|| {
+                    loop {
+                        let Some((i, dst)) = queue.lock().unwrap().pop() else { break };
+                        work(i * band, dst);
+                    }
+                });
+            }
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = threads;
+    #[cfg(target_arch = "wasm32")]
+    for (i, dst) in out.chunks_mut(band * w).enumerate() {
+        work(i * band, dst);
+    }
+    *z = out;
+    spikes.into_inner()
+}
 
 /// Pick a spawn in the dune field. The site is cut into ~128 m blocks, each scored by the
 /// variance of the surface gradient measured over an 8 m baseline (dunes = slopes alternating in
