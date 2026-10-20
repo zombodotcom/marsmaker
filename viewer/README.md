@@ -60,6 +60,7 @@ Both use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for 
 | `--step N` | decimation step for the far terrain mesh (must divide 144). Default: automatic, keeping the site under about 16M vertices. |
 | `--high-cam` | start in the high camera. |
 | `--low` | cheaper rendering for weak machines / browsers (`?low`): no HDR/bloom, FXAA instead of MSAA, no close-up terrain detail, fewer dust particles, shorter tire tracks, smaller shadow maps. |
+| `--bg-window` | test runs: open the window unfocused and off-screen. |
 | `--cam-zoom Z` | start with this mouse-wheel zoom factor (1 = default; for screenshots). |
 | `--autodrive` | full throttle with a slow sinusoidal weave. Auto-flips if the buggy sits on its roof for 3 s. |
 | `--weave A` | steer amplitude for `--autodrive`, 0..1 (default 0.35; 0 = straight). |

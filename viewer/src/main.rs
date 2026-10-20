@@ -51,6 +51,8 @@ struct Args {
     low: bool,
     /// initial mouse-wheel zoom factor (tests / screenshots)
     cam_zoom: f32,
+    /// test runs: unfocused window parked off-screen so it doesn't disturb whoever uses the PC
+    bg_window: bool,
     /// live mode: site id in live_index.json, the index file / URL, finest post spacing
     live: Option<String>,
     live_index: String,
@@ -80,6 +82,7 @@ impl Args {
             high_cam: false,
             low: false,
             cam_zoom: 1.0,
+            bg_window: false,
             live: None,
             #[cfg(not(target_arch = "wasm32"))]
             live_index: concat!(env!("CARGO_MANIFEST_DIR"), "/web/live_index.json").into(),
@@ -113,6 +116,7 @@ impl Args {
                 "--autodrive" => a.autodrive = true,
                 "--high-cam" => a.high_cam = true,
                 "--low" => a.low = true,
+                "--bg-window" => a.bg_window = true,
                 "--cam-zoom" => a.cam_zoom = num(it.next(), "--cam-zoom"),
                 "--weave" => a.weave = num(it.next(), "--weave"),
                 "--throttle" => a.throttle = num(it.next(), "--throttle"),
@@ -214,6 +218,8 @@ fn main() {
                 resolution: (1280, 720).into(),
                 canvas: Some("#bevy".into()),
                 fit_canvas_to_parent: true,
+                focused: !args.bg_window,
+                position: if args.bg_window { WindowPosition::At(IVec2::new(-3000, -3000)) } else { WindowPosition::Automatic },
                 ..default()
             }),
             ..default()
