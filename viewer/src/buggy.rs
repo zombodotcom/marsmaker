@@ -1109,73 +1109,20 @@ pub struct Chassis;
 #[derive(Component)]
 pub struct Wheel(pub usize);
 
-pub fn spawn_visuals(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) {
-    let paint = materials.add(StandardMaterial { base_color: Color::srgb(0.95, 0.42, 0.08), perceptual_roughness: 0.4, metallic: 0.3, ..default() });
-    let steel = materials.add(StandardMaterial { base_color: Color::srgb(0.18, 0.19, 0.2), perceptual_roughness: 0.5, metallic: 0.8, ..default() });
-    let seat = materials.add(StandardMaterial { base_color: Color::srgb(0.08, 0.08, 0.09), perceptual_roughness: 0.9, ..default() });
-    let tire = materials.add(StandardMaterial { base_color: Color::srgb(0.06, 0.06, 0.06), perceptual_roughness: 0.95, ..default() });
-    let rim = materials.add(StandardMaterial { base_color: Color::srgb(0.75, 0.75, 0.78), metallic: 0.9, perceptual_roughness: 0.3, ..default() });
-
-    let tube = |len: f32| Cuboid::new(0.07, len, 0.07);
-    commands
-        .spawn((Chassis, Transform::default(), Visibility::default()))
-        .with_children(|b| {
-            // floor pan + nose + engine box
-            b.spawn((Mesh3d(meshes.add(Cuboid::new(1.5, 0.18, 3.0))), MeshMaterial3d(paint.clone()), Transform::from_xyz(0.0, -0.1, 0.0)));
-            b.spawn((Mesh3d(meshes.add(Cuboid::new(1.3, 0.3, 0.7))), MeshMaterial3d(paint.clone()),
-                Transform::from_xyz(0.0, 0.08, -1.25).with_rotation(Quat::from_rotation_x(-0.25))));
-            b.spawn((Mesh3d(meshes.add(Cuboid::new(1.1, 0.5, 0.8))), MeshMaterial3d(steel.clone()), Transform::from_xyz(0.0, 0.2, 1.15)));
-            // seats
-            for x in [-0.35, 0.35] {
-                b.spawn((Mesh3d(meshes.add(Cuboid::new(0.5, 0.12, 0.55))), MeshMaterial3d(seat.clone()), Transform::from_xyz(x, 0.05, 0.25)));
-                b.spawn((Mesh3d(meshes.add(Cuboid::new(0.5, 0.7, 0.12))), MeshMaterial3d(seat.clone()),
-                    Transform::from_xyz(x, 0.4, 0.55).with_rotation(Quat::from_rotation_x(0.15))));
-            }
-            // roll cage: four posts and a roof frame
-            for (x, z) in [(-0.68, -0.35), (0.68, -0.35), (-0.68, 0.75), (0.68, 0.75)] {
-                b.spawn((Mesh3d(meshes.add(tube(1.15))), MeshMaterial3d(steel.clone()), Transform::from_xyz(x, 0.55, z)));
-            }
-            for z in [-0.35, 0.75] {
-                b.spawn((Mesh3d(meshes.add(Cuboid::new(1.43, 0.07, 0.07))), MeshMaterial3d(steel.clone()), Transform::from_xyz(0.0, 1.12, z)));
-            }
-            for x in [-0.68, 0.68] {
-                b.spawn((Mesh3d(meshes.add(Cuboid::new(0.07, 0.07, 1.17))), MeshMaterial3d(steel.clone()), Transform::from_xyz(x, 1.12, 0.2)));
-            }
-            // light bar
-            b.spawn((Mesh3d(meshes.add(Cuboid::new(1.0, 0.1, 0.1))), MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::WHITE, emissive: LinearRgba::rgb(8.0, 7.5, 6.0), ..default() })),
-                Transform::from_xyz(0.0, 1.2, -0.36)));
-        });
-    for i in 0..4 {
-        commands
-            .spawn((Wheel(i), Transform::default(), Visibility::default()))
-            .with_children(|w| {
-                let lay = Transform::from_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
-                w.spawn((Mesh3d(meshes.add(Cylinder::new(WHEEL_R, 0.38))), MeshMaterial3d(tire.clone()), lay));
-                w.spawn((Mesh3d(meshes.add(Cylinder::new(WHEEL_R * 0.55, 0.4))), MeshMaterial3d(rim.clone()), lay));
-                // tread blocks so you can see the wheels turn
-                for k in 0..10 {
-                    let a = k as f32 / 10.0 * std::f32::consts::TAU;
-                    w.spawn((Mesh3d(meshes.add(Cuboid::new(0.4, 0.06, 0.1))), MeshMaterial3d(tire.clone()),
-                        Transform::from_rotation(Quat::from_rotation_x(a)).with_translation(Quat::from_rotation_x(a) * Vec3::Y * WHEEL_R)));
-                }
-            });
+/// Geometry the visuals (src/visuals.rs) need to draw the buggy where the physics has it.
+pub(crate) const VIS_COM: Vec3 = COM;
+impl Buggy {
+    /// suspension length at full droop (a wheel at this length isn't touching the ground)
+    pub(crate) fn vis_rest(&self) -> f32 {
+        self.tuning.rest
     }
 }
+pub(crate) const VIS_WHEEL_R: f32 = WHEEL_R;
 
-pub fn sync_visuals(buggy: Res<Buggy>, mut chassis: Query<&mut Transform, (With<Chassis>, Without<Wheel>)>, mut wheels: Query<(&Wheel, &mut Transform), Without<Chassis>>) {
-    if let Ok(mut t) = chassis.single_mut() {
-        *t = Transform::from_translation(buggy.pos - buggy.rot * COM).with_rotation(buggy.rot);
-    }
-    for (w, mut t) in &mut wheels {
-        let i = w.0;
-        let off = WHEELS[i] - COM - Vec3::Y * buggy.wheel_len[i];
-        let steer = if i < 2 { buggy.steer } else { 0.0 };
-        t.translation = buggy.pos + buggy.rot * off;
-        t.rotation = buggy.rot * Quat::from_rotation_y(-steer) * Quat::from_rotation_x(-buggy.wheel_spin[i]);
-    }
+/// The buggy model lives in src/visuals.rs.
+pub fn spawn_visuals(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+    crate::visuals::spawn_buggy(commands, meshes, materials);
 }
+
+/// Chassis / wheel poses from the physics state (see visuals::sync_buggy).
+pub use crate::visuals::sync_buggy as sync_visuals;

@@ -2,7 +2,7 @@
 //!
 //!   marsmaker-viewer [SITE_DIR] [--step N] [--spawn X,Z] [--heading DEG] [--mode real|fun] [--realistic] [--albedo]
 //!                    [--autodrive] [--weave A] [--throttle T] [--seconds N] [--shot OUT.png] [--shot-at T]
-//!                    [--log-every T] [--high-cam] [--gravity-mult G] [--script jump@3,boost@4-6,mode@8]
+//!                    [--log-every T] [--high-cam] [--low] [--cam-zoom Z] [--gravity-mult G] [--script jump@3,boost@4-6,mode@8]
 //!   marsmaker-viewer --live SITE_ID [--live-index FILE] [--live-mpp M] [--live-dump OUT]
 //!
 //! In the browser the same flags come from the URL query, e.g. `?site=NAME&autodrive&albedo`
@@ -19,10 +19,9 @@ mod live;
 mod sand;
 mod sand_sim;
 mod terrain;
+mod visuals;
 
-use bevy::light::CascadeShadowConfigBuilder;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
-use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
@@ -52,6 +51,10 @@ struct Args {
     shot_at: f32,
     log_every: f32,
     high_cam: bool,
+    /// --low / ?low: cheaper rendering for weak machines (see visuals.rs)
+    low: bool,
+    /// initial mouse-wheel zoom factor (tests / screenshots)
+    cam_zoom: f32,
     /// test runs: small, unfocused, bottom-most window off the visible desktop, no taskbar entry
     bg_window: bool,
     /// live mode: site id in live_index.json, the index file / URL, finest post spacing
@@ -90,6 +93,8 @@ impl Args {
             shot_at: 3.0,
             log_every: 1.0,
             high_cam: false,
+            low: false,
+            cam_zoom: 1.0,
             bg_window: false,
             live: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -129,6 +134,8 @@ impl Args {
                 "--albedo" => a.albedo = true,
                 "--autodrive" => a.autodrive = true,
                 "--high-cam" => a.high_cam = true,
+                "--low" => a.low = true,
+                "--cam-zoom" => a.cam_zoom = num(it.next(), "--cam-zoom"),
                 "--bg-window" => a.bg_window = true,
                 "--bench-patterns" => a.bench_patterns = Some(it.next().expect("--bench-patterns needs a list")),
                 "--weave" => a.weave = num(it.next(), "--weave"),
@@ -262,11 +269,10 @@ fn main() {
     }
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
-        .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0, zoom: 1.0 } } else { CamMode { dist: 9.0, height: 3.2, zoom: 1.0 } })
+        .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0, zoom: args.cam_zoom } } else { CamMode { dist: 9.0, height: 3.2, zoom: args.cam_zoom } })
+        .add_plugins(visuals::VisualsPlugin { low: args.low })
         .add_plugins(sand::SandPlugin(args.sand.clone())) // REAL SAND mode
         .insert_resource(args)
-        .insert_resource(ClearColor(Color::srgb(0.80, 0.62, 0.47)))
-        .insert_resource(GlobalAmbientLight { color: Color::srgb(1.0, 0.85, 0.7), brightness: 900.0, ..default() })
         .insert_resource(Time::<Fixed>::from_hz(120.0))
         .init_resource::<Controls>()
         .init_resource::<RunClock>()
@@ -336,21 +342,8 @@ fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh
 
     buggy::spawn_visuals(&mut commands, &mut meshes, &mut materials);
     // placeholder low sun from the north-west; replaced by the image's sun once loaded
-    commands.spawn((
-        DirectionalLight { illuminance: 9000.0, shadow_maps_enabled: true, color: Color::srgb(1.0, 0.93, 0.82), ..default() },
-        Transform::from_xyz(-1.0, 0.75, -0.6).looking_at(Vec3::ZERO, Vec3::Y),
-        CascadeShadowConfigBuilder { maximum_distance: 400.0, first_cascade_far_bound: 25.0, ..default() }.build(),
-    ));
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 4.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
-        DistanceFog {
-            color: Color::srgba(0.80, 0.62, 0.47, 1.0),
-            directional_light_color: Color::srgba(1.0, 0.9, 0.7, 0.3),
-            directional_light_exponent: 20.0,
-            falloff: FogFalloff::Linear { start: 1200.0, end: 7000.0 },
-        },
-    ));
+    commands.spawn(visuals::sun_bundle(args.low));
+    visuals::spawn_camera(&mut commands, args.low, Transform::from_xyz(0.0, 4.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y));
     commands.spawn((
         Hud,
         Text::new(""),
