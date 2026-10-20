@@ -10,6 +10,40 @@ target/release/marsmaker-viewer [SITE_DIR] [flags]
 `SITE_DIR` is a converted site folder containing `meta.json`. The default is the Russell Crater
 megadune, `D:\marsmaker_data\sites\PSP_007018_1255_PSP_007229_1255`.
 
+## Main menu
+
+Started with no site and no live id (and no test flags such as `--shot`, `--seconds`,
+`--autodrive`, `--script`), the viewer opens on the main menu; `--menu` forces it. With a site or
+`--live ID` on the command line (or `?site=` / `?live=` in the URL, as play.html links use) it goes
+straight in, as before. Pages:
+
+- **ABOUT**: the disclaimer. Real NASA HiRISE terrain (CC0, NASA/JPL/University of Arizona);
+  heights accurate to decimetres but resolution about 1-4 m; FUN ignores real physics; SAND is
+  simulated and changes the terrain; not a scientific tool; MIT code.
+- **MAP**: the converted sites on disk (every folder with a `meta.json` in the sites directory,
+  default `D:\marsmaker_data\sites`, or `--sites-dir DIR`; `*.tmp` folders are skipped) plus the
+  1,262 DTMs live mode streams from NASA (`web/live_index.json`, or `--live-index FILE`). Type to
+  search (name, id, place), filter chips (dunes, craters, polar, gullies, layers, channels,
+  landing sites, ice) and source chips (on disk / live). The Mars map has one dot per site
+  (cyan on disk, orange live); click near a dot to pick it. In the browser the on-disk list is
+  `sites.json` next to the page (written by `tools/web_pack.py`; without it the two default web
+  sites are tried).
+- **MODE**: FUN / REAL / SAND (SAND shows as "coming soon" until the build has that mode), plus the
+  terrain smoothing setting (`--smooth`).
+- **CONTROLS**: keys and touch.
+
+PLAY loads the site with the usual progress display. In game, **Esc** (or the `||` button at the
+top right, for touch) pauses and opens the pause menu: Resume, Change map, Change mode,
+Controls, About, Quit. The game clock and physics stop while a menu is open. Changing mode on the
+same map is instant; changing map (or smoothing, or to/from a mode that rewrites the terrain)
+despawns the old terrain, buggy and every other scene entity spawned for the site, drops the site
+resources (heightfield, meshes, textures), then loads the new map. The log prints entity / mesh /
+image / material counts and process memory before and after each unload.
+
+Menu keys: Tab / Shift+Tab switch pages, Up / Down (PageUp / PageDown) choose a site, Left /
+Right cycle filters, typing searches, Backspace deletes, Enter plays, Esc goes back / resumes.
+Mouse wheel or drag scrolls the list; double-click a row to play it.
+
 ## Modes
 
 Three driving modes, shown in the HUD. Press **M** to cycle FUN -> REAL -> SAND live (keeps position
@@ -55,7 +89,7 @@ All use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for f
 | R | flip upright where you are |
 | C | toggle chase camera / high camera |
 | Mouse wheel | zoom the camera in / out (C resets) |
-| Esc | quit |
+| Esc | pause menu (Resume, Change map, Change mode, Controls, Quit) |
 
 ## Flags
 
@@ -79,6 +113,10 @@ All use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for f
 | `--cam-zoom Z` | start with this mouse-wheel zoom factor (1 = default; for screenshots). |
 | `--bg-window` | for automated test runs: a small 640x360, unfocused, bottom-most window off the visible desktop with no taskbar entry, so tests don't pop up over the user (rendering and `--shot` still work; fps is throttled there, so measure fps without it). |
 | `--smooth M` | terrain low-pass sigma in metres (default 2; `0` = the raw DTM). See *Terrain* below. |
+| `--menu` | open the main menu even though a site is given (it is then preselected). |
+| `--sites-dir DIR` | folder of converted sites listed in the menu (default `D:\marsmaker_data\sites`). |
+| `--window WxH` | window size (e.g. `--window 1280x720` with `--bg-window`, for menu screenshots). |
+| `--menu-script LIST` | menu test hook (implies `--menu`): comma-separated steps `CMD[:ARG][@DELAY]` run in order, DELAY = seconds to wait after the step (default 0.3). `page:map\|mode\|about\|controls\|pause`, `search:TEXT`, `filter:dunes`, `source:all\|disk\|live`, `site:ID` / `site:live:ID`, `mode:fun\|real\|sand`, `smooth:raw\|1\|2\|4`, `play`, `esc`, `resume`, `loaded` (wait until driving), `drive:on\|off` (autodrive), `shot:FILE.png` (waits until saved), `stats` (entities / assets / memory), `wait:S`, `quit`. |
 | `--autodrive` | full throttle with a slow sinusoidal weave. Auto-flips if the buggy sits on its roof for 3 s. |
 | `--weave A` | steer amplitude for `--autodrive`, 0..1 (default 0.35; 0 = straight). |
 | `--throttle T` | autodrive throttle, 0..1 (default 1). |
@@ -117,6 +155,13 @@ overrides tuning fields (see `Tuning::apply_overrides`) for sweeps without a reb
 `tools/make_ramp_site.py OUT_DIR [--bumps 0.4]` writes a synthetic site with 20-50 deg side-slope
 strips for physics tests (it prints the `--spawn`/`--heading` for each strip).
 `tools/web_pack.py` makes downsampled copies of sites for the browser build (see WEB.md).
+
+Menu round trip (main menu, local site, pause, switch to another local site and a live one, switch
+mode, with screenshots and unload counts in the log):
+
+```
+marsmaker-viewer --bg-window --window 1280x720 --menu-script "shot:m_about.png,page:map,filter:dunes,shot:m_map.png,site:PSP_007018_1255_PSP_007229_1255,mode:real,play,loaded@6,shot:g1.png,esc,shot:pause.png,page:map,site:PSP_003800_1325_PSP_004077_1325,play,loaded@6,shot:g2.png,esc,page:map,site:live:ESP_011417_1755_ESP_011562_1755,play,loaded@6,shot:g3.png,esc,page:mode,mode:fun,play@2,shot:g4.png,quit"
+```
 
 Example test run (about 20 s, below-normal priority is advisable on a shared PC):
 

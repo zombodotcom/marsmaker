@@ -10,7 +10,7 @@
 //! Crater megadune. `--live SITE_ID` (browser: `?live=SITE_ID`) streams any HiRISE DTM straight
 //! from NASA's public bucket instead (see live.rs and WEB.md). Controls: W/S or arrows = throttle/reverse,
 //! A/D = steer, Space = brake, R = flip upright, M = FUN / REAL / SAND mode, C = toggle chase / high camera,
-//! Esc = quit; FUN mode adds Shift = boost, Ctrl/J = jump, W/S/A/D = pitch/roll in the air. See README.md for the flags.
+//! Esc = pause menu; FUN mode adds Shift = boost, Ctrl/J = jump, W/S/A/D = pitch/roll in the air. See README.md for the flags.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod bench;
@@ -18,6 +18,8 @@ mod buggy;
 mod live;
 mod sand;
 mod sand_sim;
+mod menu; // [menu] main / pause menu
+mod sites; // [menu] site catalogue for the menu
 mod terrain;
 mod visuals;
 
@@ -72,6 +74,12 @@ struct Args {
     bench_patterns: Option<String>,
     /// REAL SAND mode flags (`--sand-*`, see sand.rs)
     sand: sand::SandArgs,
+    // [menu] open the main menu first (no site / live id given, or --menu); converted-sites folder
+    // the menu lists (--sites-dir); menu test script (--menu-script, see menu.rs); window size (--window WxH)
+    menu: bool,
+    sites_dir: String,
+    menu_script: Option<String>,
+    window: Option<(u32, u32)>,
 }
 
 impl Args {
@@ -109,6 +117,13 @@ impl Args {
             bench_mode: None,
             bench_patterns: None,
             sand: sand::SandArgs::default(),
+            menu: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            sites_dir: std::path::Path::new(DEFAULT_SITE).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+            #[cfg(target_arch = "wasm32")]
+            sites_dir: "sites".into(),
+            menu_script: None,
+            window: None,
         };
         let mut it = argv.into_iter();
         let num = |s: Option<String>, flag: &str| -> f32 {
@@ -155,6 +170,18 @@ impl Args {
                     let v = it.next().expect("--bench-mode needs real or fun");
                     a.bench_mode = Some(Mode::parse(&v).unwrap_or_else(|| panic!("--bench-mode {v}: use real or fun")));
                 }
+                // [menu]
+                "--menu" => a.menu = true,
+                "--sites-dir" => a.sites_dir = it.next().expect("--sites-dir needs a path"),
+                "--menu-script" => {
+                    a.menu_script = Some(it.next().expect("--menu-script needs a list"));
+                    a.menu = true;
+                }
+                "--window" => {
+                    let v = it.next().expect("--window needs WxH");
+                    let (w, h) = v.split_once('x').expect("--window WxH");
+                    a.window = Some((w.parse().expect("--window WxH"), h.parse().expect("--window WxH")));
+                }
                 "--live-dump" => a.live_dump = Some(PathBuf::from(it.next().expect("--live-dump needs a path"))),
                 f if sand::SandArgs::takes(f) => a.sand.set(f, it.next().unwrap_or_else(|| panic!("{f} needs a value"))), // REAL SAND
                 f if f.starts_with("--") => panic!("unknown flag {f}"),
@@ -164,9 +191,15 @@ impl Args {
         a
     }
 
+    /// [menu] Interactive start (no site / live id, no test flags): show the main menu first.
+    fn wants_menu(&self) -> bool {
+        self.site.is_empty() && self.live.is_none() && self.shot.is_none() && self.seconds.is_none() && !self.autodrive && self.script.is_none()
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn parse() -> Self {
         let mut a = Self::parse_from(std::env::args().skip(1));
+        a.menu |= a.wants_menu(); // [menu]
         if a.site.is_empty() {
             a.site = DEFAULT_SITE.into();
         }
@@ -188,6 +221,7 @@ impl Args {
             }
         }
         let mut a = Self::parse_from(argv);
+        a.menu |= a.wants_menu(); // [menu]
         if a.site.is_empty() {
             a.site = DEFAULT_SITE_NAME.into();
         }
@@ -267,6 +301,9 @@ fn main() {
         window.skip_taskbar = true;
         window.decorations = false;
     }
+    if let Some((w, h)) = args.window {
+        window.resolution = (w, h).into(); // [menu] test screenshots at a chosen size
+    }
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
         .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0, zoom: args.cam_zoom } } else { CamMode { dist: 9.0, height: 3.2, zoom: args.cam_zoom } })
@@ -276,16 +313,18 @@ fn main() {
         .insert_resource(Time::<Fixed>::from_hz(120.0))
         .init_resource::<Controls>()
         .init_resource::<RunClock>()
+        .add_plugins(menu::MenuPlugin) // [menu]
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
+                begin_load.run_if(resource_exists::<StartLoad>), // [menu]
                 finish_load,
                 clock,
-                input,
+                input.run_if(menu::playing), // [menu] no driving keys while a menu is open
                 fine_window,
                 buggy::sync_visuals.run_if(resource_exists::<Buggy>),
-                chase_camera,
+                chase_camera.run_if(menu::playing),
                 hud,
                 test_hooks,
             )
@@ -330,17 +369,10 @@ fn live_dump(id: &str, index: &str, mpp: Option<f32>, out: &std::path::Path) -> 
     Ok(())
 }
 
-fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    let src = match &args.live {
-        Some(id) => Source::live(id.clone(), args.live_index.clone()),
-        None => Source::new(args.site.clone()),
-    };
-    let progress = Progress::default();
-    let opts = LoadOptions { step: args.step, albedo: args.albedo, live_mpp: args.live_mpp, smooth_m: args.smooth };
-    let task = IoTaskPool::get().spawn(terrain::load(src.clone(), opts, progress.clone()));
-    commands.insert_resource(Loading { task, progress, name: src.name() });
-
-    buggy::spawn_visuals(&mut commands, &mut meshes, &mut materials);
+fn setup(mut commands: Commands, args: Res<Args>) {
+    if !args.menu {
+        commands.insert_resource(StartLoad); // [menu] site given on the command line / URL: go straight in
+    }
     // placeholder low sun from the north-west; replaced by the image's sun once loaded
     commands.spawn(visuals::sun_bundle(args.low));
     visuals::spawn_camera(&mut commands, args.low, Transform::from_xyz(0.0, 4.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y));
@@ -351,6 +383,25 @@ fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh
         TextColor(Color::srgb(1.0, 0.96, 0.9)),
         Node { position_type: PositionType::Absolute, top: Val::Px(12.0), left: Val::Px(14.0), ..default() },
     ));
+}
+
+/// [menu] Ask `begin_load` to load `Args::site` / `Args::live` (startup with a site, or the menu's PLAY).
+#[derive(Resource)]
+struct StartLoad;
+
+/// [menu] Start the background load of the site in `Args` and spawn the buggy (was in `setup`).
+fn begin_load(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    commands.remove_resource::<StartLoad>();
+    let src = match &args.live {
+        Some(id) => Source::live(id.clone(), args.live_index.clone()),
+        None => Source::new(args.site.clone()),
+    };
+    let progress = Progress::default();
+    let opts = LoadOptions { step: args.step, albedo: args.albedo, live_mpp: args.live_mpp, smooth_m: args.smooth };
+    let task = IoTaskPool::get().spawn(terrain::load(src.clone(), opts, progress.clone()));
+    commands.insert_resource(Loading { task, progress, name: src.name() });
+
+    buggy::spawn_visuals(&mut commands, &mut meshes, &mut materials);
 }
 
 /// When the background load finishes: spawn terrain + buggy, aim the sun, place the camera.
@@ -419,7 +470,6 @@ fn input(
     buggy: Option<Res<Buggy>>,
     mut ctl: ResMut<Controls>,
     mut cam: ResMut<CamMode>,
-    mut exit: MessageWriter<AppExit>,
     mut flipped_since: Local<Option<f32>>,
     mut script_t: Local<f32>,
 ) {
@@ -454,9 +504,6 @@ fn input(
     if keys.just_pressed(KeyCode::KeyC) {
         (cam.dist, cam.height) = if cam.dist < 20.0 { (60.0, 25.0) } else { (9.0, 3.2) };
         cam.zoom = 1.0;
-    }
-    if keys.just_pressed(KeyCode::Escape) {
-        exit.write(AppExit::Success);
     }
 }
 

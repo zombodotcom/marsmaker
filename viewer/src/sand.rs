@@ -126,7 +126,17 @@ impl Plugin for SandPlugin {
             .insert_resource(SandState::new(&self.0))
             .init_resource::<SandRender>()
             .init_resource::<SandHud>()
-            .add_systems(Update, (sand_control, sand_sim, sand_meshes, sand_report).chain());
+            .add_systems(Update, (sand_unloaded, sand_control, sand_sim, sand_meshes, sand_report).chain());
+    }
+}
+
+/// The menu unloaded the map: drop all per-site sand state (its entities are already despawned).
+fn sand_unloaded(mut msgs: MessageReader<crate::menu::SiteUnloaded>, args: Res<SandArgs>, mut st: ResMut<SandState>, mut rnd: ResMut<SandRender>, mut hud: ResMut<SandHud>) {
+    if msgs.read().count() > 0 {
+        *st = SandState::new(&args);
+        *rnd = SandRender::default();
+        hud.0.clear();
+        info!("SAND: map unloaded, sand state dropped");
     }
 }
 
@@ -627,6 +637,8 @@ pub struct SandState {
     total_s: f64,
     last_launch: Option<Instant>,
     last_dt: f64,
+    /// game (virtual) time since the last launch: stops while the pause menu is open
+    pending_dt: f64,
     rate_actual: f64,
     stats: RunStats,
     sim_ms_avg: f32,
@@ -665,6 +677,7 @@ impl SandState {
             total_s: 0.0,
             last_launch: None,
             last_dt: 0.0,
+            pending_dt: 0.0,
             rate_actual: 0.0,
             stats: RunStats::default(),
             sim_ms_avg: 0.0,
@@ -877,8 +890,9 @@ fn sand_control(
     }
 }
 
-fn sand_sim(mut st: ResMut<SandState>, site: Option<Res<Site>>, buggy: Option<Res<Buggy>>, mut rnd: ResMut<SandRender>) {
+fn sand_sim(mut st: ResMut<SandState>, site: Option<Res<Site>>, buggy: Option<Res<Buggy>>, mut rnd: ResMut<SandRender>, time: Res<Time>) {
     let (Some(site), Some(buggy)) = (site, buggy) else { return };
+    st.pending_dt += time.delta_secs_f64();
     let Some(shared) = site.sand.clone() else { return };
     // collect a finished run
     if let Some(task) = &mut st.task {
@@ -899,7 +913,8 @@ fn sand_sim(mut st: ResMut<SandState>, site: Option<Res<Site>>, buggy: Option<Re
     }
     let sand_mode = buggy.tuning.mode == Mode::Sand;
     let now = Instant::now();
-    let dt = st.last_launch.map_or(0.0, |t| now.duration_since(t).as_secs_f64()).min(0.25);
+    let dt = if st.last_launch.is_some() { st.pending_dt.min(0.25) } else { 0.0 };
+    st.pending_dt = 0.0;
     st.last_launch = Some(now);
     st.last_dt = dt;
     let p = st.params.unwrap();
