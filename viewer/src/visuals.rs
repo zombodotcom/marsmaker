@@ -8,7 +8,7 @@
 //!
 //! Everything here only *reads* the physics state (`Buggy`, `Site`); nothing feeds back into it.
 
-use crate::buggy::{Buggy, Chassis, VIS_COM, VIS_REST, VIS_WHEEL_R, WHEELS, Wheel};
+use crate::buggy::{Buggy, Chassis, VIS_COM, VIS_WHEEL_R, WHEELS, Wheel};
 use crate::terrain::Site;
 use bevy::anti_alias::fxaa::Fxaa;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
@@ -586,7 +586,7 @@ fn wheel_contacts(b: &Buggy) -> [(Vec3, bool); 4] {
     let up = b.rot * Vec3::Y;
     std::array::from_fn(|i| {
         let hub = b.pos + b.rot * (WHEELS[i] - VIS_COM - Vec3::Y * b.wheel_len[i]);
-        (hub - up * VIS_WHEEL_R, b.wheel_len[i] < VIS_REST - 1e-3)
+        (hub - up * VIS_WHEEL_R, b.wheel_len[i] < b.vis_rest() - 1e-3)
     })
 }
 
