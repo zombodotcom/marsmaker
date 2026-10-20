@@ -54,7 +54,8 @@ OVERLAY = r"""
   <div id="mm-help"><kbd>W</kbd>/<kbd>&uarr;</kbd> throttle &nbsp;<kbd>S</kbd>/<kbd>&darr;</kbd> reverse &nbsp;
     <kbd>A</kbd><kbd>D</kbd> steer<br><kbd>Space</kbd> brake &nbsp;<kbd>R</kbd> flip upright &nbsp;<kbd>C</kbd> camera<br>
     <kbd>Shift</kbd> boost &nbsp;<kbd>Ctrl</kbd>/<kbd>J</kbd> jump &nbsp;in the air <kbd>W</kbd><kbd>S</kbd> pitch, <kbd>A</kbd><kbd>D</kbd> roll
-    (FUN mode) &nbsp;<kbd>M</kbd> FUN / REAL mode<br>
+    (FUN mode)<br><kbd>M</kbd> FUN / REAL / SAND &nbsp;<kbd>Esc</kbd> menu (sites, mode, controls)<br>
+    SAND: <kbd>[</kbd><kbd>]</kbd> time-lapse &nbsp;<kbd>,</kbd><kbd>.</kbd> wind &nbsp;<kbd>K</kbd> real DTM<br>
     Click the terrain first so it gets the keyboard. The page may freeze a few seconds while the site decodes.</div>
   <div id="mm-touch">
     <div class="grp"><button data-code="ArrowLeft" aria-label="steer left">&#9664;</button><button data-code="ArrowRight" aria-label="steer right">&#9654;</button>
@@ -116,6 +117,19 @@ def make_live(src_html):
     return html
 
 
+def load_sites(path):
+    """sites.json entries. The viewer's menu (viewer/src/sites.rs) wants a JSON array of names or of objects
+    with a 'name'; older pack_sites.py runs wrote {"sites": [{"site": ...}]}, so that is rewritten in place."""
+    data = json.load(open(path))
+    sites = data['sites'] if isinstance(data, dict) else data
+    if isinstance(data, dict) or any(s.get('name') != s['site'] for s in sites):
+        for s in sites:
+            s['name'] = s['site']
+        json.dump(sites, open(path, 'w'), indent=1)
+        print(f'{path}: rewritten as an array with "name" for the viewer menu')
+    return sites
+
+
 def netlify_cli():
     exe = shutil.which('netlify')
     return [exe] if exe else [shutil.which('npx') or 'npx', '--no-install', 'netlify']
@@ -173,7 +187,7 @@ def main():
 
     if not a.no_pack:
         run([sys.executable, os.path.join(HERE, 'pack_sites.py'), '--out', out])
-    sites = json.load(open(os.path.join(out, 'sites.json')))['sites']
+    sites = load_sites(os.path.join(out, 'sites.json'))
 
     shutil.copy(os.path.join(HERE, 'index.html'), os.path.join(out, 'index.html'))
     with open(os.path.join(out, 'play.html'), 'w', encoding='utf-8', newline='\n') as f:

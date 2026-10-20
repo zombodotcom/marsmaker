@@ -6,7 +6,8 @@
 * runs viewer/tools/web_pack.py (default --max-mpix 16) for every listed site that is not packed yet,
   at below-normal priority, into OUT/sites/<site>/
 * writes OUT/thumbs/<site>.jpg (480x360 crop of the texture mosaic, centred on the densest data)
-* writes OUT/sites.json (title, tag, lat/lon, size, tiles, m/post, rationale) used by index.html
+* writes OUT/sites.json, an array of {name, site, title, tag, lat/lon, size, tiles, m/post, rationale} used by
+  index.html and by the viewer's in-game site menu
 * --review also writes OUT/review/<site>.png: texture next to a hillshade of the packed heights,
   for eyeballing ortho/height alignment (not deployed)
 """
@@ -167,7 +168,11 @@ def main():
     stale = [n for n in os.listdir(os.path.join(a.out, 'sites')) if n not in listed]
     if stale:
         print('not in sites.txt (left on disk, not deployed):', ', '.join(stale))
-    json.dump({'sites': entries}, open(os.path.join(a.out, 'sites.json'), 'w'), indent=1)
+    # A JSON array of objects: the viewer's in-game map menu (src/sites.rs) reads each 'name' and fetches
+    # sites/<name>/meta.json; index.html reads the card fields. 'site' is the same as 'name'.
+    for e in entries:
+        e['name'] = e['site']
+    json.dump(entries, open(os.path.join(a.out, 'sites.json'), 'w'), indent=1)
     total = sum(e['size_mb'] for e in entries)
     print(f'{len(entries)} sites, {total:.0f} MB of site data -> {os.path.join(a.out, "sites.json")}')
 

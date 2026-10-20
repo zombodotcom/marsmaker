@@ -131,11 +131,13 @@
       <b>Options</b>
       <span class="mode" role="radiogroup" aria-label="Driving mode"><span class="seg">
         <label><input type="radio" name="mode" value="fun" id="o-mode-fun"><span>FUN</span></label>
-        <label><input type="radio" name="mode" value="real" id="o-mode-real"><span>REAL</span></label></span>
+        <label><input type="radio" name="mode" value="real" id="o-mode-real"><span>REAL</span></label>
+        <label><input type="radio" name="mode" value="sand" id="o-mode-sand"><span>SAND</span></label></span>
         <small id="mode-note"></small></span>
       <label class="sw"><input type="checkbox" id="o-albedo"> De-lit albedo <small>(where available)</small></label>
       <label class="sw"><input type="checkbox" id="o-highcam"> Start in high camera</label>
       <label class="sw"><input type="checkbox" id="o-autodrive"> Autodrive <small>(sit back and watch)</small></label>
+      <label class="sw"><input type="checkbox" id="o-low"> Low graphics <small>(weak GPUs, phones)</small></label>
     </div>
     <p class="note">Best on a desktop or laptop with a keyboard and a decent GPU. Phones get on-screen touch
       buttons, but the terrain is heavy, so some phones will struggle. Each site downloads 5-30&nbsp;MB, plus about
@@ -157,11 +159,17 @@
       <div class="key"><kbd>Shift</kbd> boost</div>
       <div class="key"><kbd>Ctrl</kbd><kbd>J</kbd> jump</div>
       <div class="key">in the air: <kbd>W</kbd><kbd>S</kbd> pitch, <kbd>A</kbd><kbd>D</kbd> roll</div>
-      <div class="key"><kbd>M</kbd> switch FUN / REAL mode</div>
+      <div class="key"><kbd>M</kbd> switch FUN / REAL / SAND</div>
+      <div class="key"><kbd>Esc</kbd> menu (sites, mode, controls)</div>
+      <div class="key">SAND: <kbd>[</kbd><kbd>]</kbd> time-lapse slower / faster</div>
+      <div class="key">SAND: <kbd>,</kbd><kbd>.</kbd> turn the wind</div>
+      <div class="key">SAND: <kbd>K</kbd> back to the real DTM</div>
     </div>
     <p class="note"><b>FUN</b> (default) has extra grip and power, Shift boost, jumps, air control and auto-flip.
       <b>REAL</b> is loose dry sand with the real power and no assists, so boost, jump and air control do nothing.
-      Press <kbd>M</kbd> while driving to switch.</p>
+      <b>SAND</b> (experimental) simulates moving dunes: speed up time with <kbd>]</kbd> and watch them migrate, leave
+      tire ruts, and bog down in soft sand. It reshapes the terrain, so it stops matching the real data until you
+      press <kbd>K</kbd>. Press <kbd>M</kbd> while driving to switch modes, or <kbd>Esc</kbd> for the menu.</p>
     <p class="note">Click the terrain once so it gets keyboard focus. The page freezes for a few seconds while a
       site decodes, which is normal. You spawn in the most dune-rich part of each site. Black areas are gaps in
       the NASA elevation model.</p>
@@ -186,14 +194,15 @@
 
 <script>
 (function () {
-  const opts = ['albedo', 'highcam', 'autodrive'];
-  const flag = { albedo: 'albedo', highcam: 'high-cam', autodrive: 'autodrive' };
-  const modeNote = { fun: 'boost, jump, air control, extra grip', real: 'loose sand, real power, no assists' };
+  const opts = ['albedo', 'highcam', 'autodrive', 'low'];
+  const flag = { albedo: 'albedo', highcam: 'high-cam', autodrive: 'autodrive', low: 'low' };
+  const modeNote = { fun: 'boost, jump, air control, extra grip', real: 'loose sand, real power, no assists',
+    sand: 'experimental: simulated moving dunes, changes the terrain' };
   const box = {};
   let store = {};
   try { store = JSON.parse(localStorage.getItem('mm-opts') || '{}'); } catch (e) {}
   // the old "realistic sand" switch is REAL mode now
-  let mode = store.mode === 'real' || store.mode === 'fun' ? store.mode : (store.realistic ? 'real' : 'fun');
+  let mode = modeNote[store.mode] ? store.mode : (store.realistic ? 'real' : 'fun');
   const radios = document.querySelectorAll('input[name=mode]');
   function save() {
     const s = { mode }; for (const k of opts) s[k] = box[k].checked;
@@ -224,7 +233,7 @@
   const fmtLon = (v) => (((v % 360) + 360) % 360).toFixed(2) + '°E';
 
   fetch('sites.json').then((r) => r.json()).then((data) => {
-    const sites = data.sites;
+    const sites = Array.isArray(data) ? data : data.sites;  // deploy/pack_sites.py writes an array (the viewer's menu reads it too)
     const grid = document.getElementById('grid');
     const tags = ['all', ...new Set(sites.map((s) => s.tag))];
     let cur = 'all';
@@ -268,6 +277,7 @@
     document.getElementById('grid').innerHTML = '<p class="note">Could not load the site list (' + esc(e) + ').</p>';
   });
   document.getElementById('quick').dataset.site = 'PSP_007018_1255_PSP_007229_1255';
+  relink();
 })();
 </script>
 </body>
