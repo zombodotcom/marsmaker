@@ -44,6 +44,7 @@ Both use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for 
 | M | switch REAL MARS / JUST FOR FUN |
 | R | flip upright where you are |
 | C | toggle chase camera / high camera |
+| Mouse wheel | zoom the camera in / out (C resets) |
 | Esc | quit |
 
 ## Flags

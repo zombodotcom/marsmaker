@@ -17,6 +17,7 @@ mod live;
 mod terrain;
 
 use bevy::light::CascadeShadowConfigBuilder;
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
@@ -165,6 +166,8 @@ struct Hud;
 struct CamMode {
     dist: f32,
     height: f32,
+    /// mouse-wheel zoom multiplier on dist and height
+    zoom: f32,
 }
 
 /// Seconds since the first frame after loading finished.
@@ -208,7 +211,7 @@ fn main() {
             }),
             ..default()
         }))
-        .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0 } } else { CamMode { dist: 9.0, height: 3.2 } })
+        .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0, zoom: 1.0 } } else { CamMode { dist: 9.0, height: 3.2, zoom: 1.0 } })
         .insert_resource(args)
         .insert_resource(ClearColor(Color::srgb(0.80, 0.62, 0.47)))
         .insert_resource(GlobalAmbientLight { color: Color::srgb(1.0, 0.85, 0.7), brightness: 900.0, ..default() })
@@ -405,6 +408,7 @@ fn input(
     }
     if keys.just_pressed(KeyCode::KeyC) {
         (cam.dist, cam.height) = if cam.dist < 20.0 { (60.0, 25.0) } else { (9.0, 3.2) };
+        cam.zoom = 1.0;
     }
     if keys.just_pressed(KeyCode::Escape) {
         exit.write(AppExit::Success);
@@ -442,11 +446,26 @@ fn fine_window(
     terrain::update_fine_window(&mut commands, &site, &mut render, &mut meshes, &mut vis, buggy.pos);
 }
 
-fn chase_camera(buggy: Option<Res<Buggy>>, site: Option<Res<Site>>, cam_mode: Res<CamMode>, time: Res<Time>, mut cam: Query<&mut Transform, With<Camera3d>>) {
+fn chase_camera(
+    buggy: Option<Res<Buggy>>,
+    site: Option<Res<Site>>,
+    mut cam_mode: ResMut<CamMode>,
+    scroll: Res<AccumulatedMouseScroll>,
+    time: Res<Time>,
+    mut cam: Query<&mut Transform, With<Camera3d>>,
+) {
+    // mouse wheel: each notch zooms 15 %, from close up to ~30x the default distance
+    let notches = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / 100.0,
+    };
+    if notches != 0.0 {
+        cam_mode.zoom = (cam_mode.zoom * 0.85f32.powf(notches)).clamp(0.35, 30.0);
+    }
     let (Some(buggy), Some(site), Ok(mut cam)) = (buggy, site, cam.single_mut()) else { return };
     let f = buggy.forward();
     let flat = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::NEG_Z);
-    let mut want = buggy.pos - flat * cam_mode.dist + Vec3::Y * cam_mode.height;
+    let mut want = buggy.pos - flat * cam_mode.dist * cam_mode.zoom + Vec3::Y * cam_mode.height * cam_mode.zoom;
     if let Some(g) = site.height(want.x, want.z) {
         want.y = want.y.max(g + 1.0); // never inside a dune
     }

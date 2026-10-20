@@ -34,9 +34,9 @@ const SAFE_KEEP: usize = 40;
 
 // --- JUST FOR FUN extras (ignored in REAL mode) ---
 /// boost: rocket-style thrust along the chassis nose, tapering to zero at BOOST_VMAX
-const BOOST_FORCE: f32 = 2800.0;
-const BOOST_VMAX: f32 = 55.0;
-const BOOST_SECS: f32 = 3.0; // a full meter lasts this long
+const BOOST_FORCE: f32 = 5000.0;
+const BOOST_VMAX: f32 = 75.0;
+const BOOST_SECS: f32 = 4.0; // a full meter lasts this long
 const BOOST_RECHARGE_SECS: f32 = 5.0; // empty -> full
 const BOOST_RECHARGE_DELAY: f32 = 0.6; // after letting go
 /// jump: velocity kick (m/s). Under Mars gravity 6 m/s is ~4.8 m high and ~3.2 s of air.
@@ -110,7 +110,7 @@ impl Mode {
 ///   (or earlier under heavy throttle, when the drive force uses up the grip). 2600 N at the
 ///   wheels against that drag gives a light sand rail's ~60 km/h on the flat. No assists.
 /// * FUN (default): a grippy friction circle (mu 1.1), stiff cornering, 4200 N and light drag
-///   (~117 km/h on the flat, ~140 with boost), plus boost, jump, air control, soft landings and
+///   (~117 km/h on the flat, ~200+ with boost), plus boost, jump, air control, soft landings and
 ///   auto-flip (see the constants above).
 ///
 /// Gravity is Mars' 3.711 m/s^2 in both, times `--gravity-mult`.
