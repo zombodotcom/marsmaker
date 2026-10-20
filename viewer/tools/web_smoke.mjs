@@ -3,6 +3,7 @@
 //
 //   node tools/web_smoke.mjs URL OUT.png [SECONDS] [CHROME_EXE]
 //
+// Also sums the bytes received over the network per host (live mode: what came from NASA).
 // Needs Node >= 22 (built-in WebSocket). Uses a throwaway Chrome profile. WebGL in headless
 // Chrome runs on SwiftShader (CPU), so it's slow but real.
 import { spawn } from 'node:child_process';
@@ -42,9 +43,24 @@ const send = (method, params = {}) => new Promise((resolve) => {
 let errors = 0;
 const t0 = Date.now();
 const stamp = () => ((Date.now() - t0) / 1000).toFixed(1).padStart(5);
+const reqHost = new Map();
+const hostBytes = new Map();
 ws.addEventListener('message', (ev) => {
   const m = JSON.parse(ev.data);
   if (m.id && pending.has(m.id)) { pending.get(m.id)(m.result); pending.delete(m.id); return; }
+  if (m.method === 'Network.requestWillBeSent') {
+    try { reqHost.set(m.params.requestId, new URL(m.params.request.url).host); } catch {}
+    return;
+  }
+  if (m.method === 'Network.loadingFinished') {
+    const h = reqHost.get(m.params.requestId) ?? '?';
+    hostBytes.set(h, (hostBytes.get(h) ?? 0) + m.params.encodedDataLength);
+    return;
+  }
+  if (m.method === 'Network.loadingFailed') {
+    console.log(`[${stamp()}] network failed: ${reqHost.get(m.params.requestId)} ${m.params.errorText}`);
+    return;
+  }
   if (m.method === 'Runtime.consoleAPICalled') {
     const text = m.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
     if (m.params.type === 'error') errors++;
@@ -62,12 +78,14 @@ ws.addEventListener('message', (ev) => {
 await send('Runtime.enable');
 await send('Log.enable');
 await send('Page.enable');
+await send('Network.enable');
 await send('Page.navigate', { url });
 await sleep(Number(secs) * 1000);
 const shot = await send('Page.captureScreenshot', { format: 'png' });
 writeFileSync(out, Buffer.from(shot.data, 'base64'));
 const mem = await send('Runtime.evaluate', { expression: 'performance.memory ? Math.round(performance.memory.usedJSHeapSize/1e6) : -1', returnByValue: true });
 console.log(`[${stamp()}] screenshot -> ${out}; JS heap ${mem?.result?.value} MB; ${errors} error(s)`);
+for (const [h, b] of hostBytes) console.log(`[${stamp()}] network: ${(b / 1e6).toFixed(2)} MB from ${h}`);
 ws.close();
 proc.kill();
 await sleep(500);

@@ -10,6 +10,9 @@ bevy = "0.20.0"
 png = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# live mode (COG streaming from NASA): pure-Rust DEFLATE / LZW
+miniz_oxide = "0.8"
+weezl = "0.1"
 
 # fast physics/terrain code even in debug builds; the engine itself fully optimised
 [profile.dev]
@@ -17,12 +20,16 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# native live mode: HTTP Range requests
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
 # browser build (wasm32-unknown-unknown): site files are fetched over HTTP, flags come from the URL
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4.79"
 js-sys = "0.3.106"
-web-sys = { version = "0.3.106", features = ["Window", "Location", "Response"] }
+web-sys = { version = "0.3.106", features = ["Window", "Location", "Response", "Request", "RequestInit", "RequestMode", "Headers"] }
 
 # size-optimised profile for the browser build: cargo build --profile web --target wasm32-unknown-unknown
 [profile.web]

@@ -179,18 +179,40 @@ impl Site {
 }
 
 /// Where site files come from: a directory on native, a URL prefix (e.g. `sites/<name>/`) on wasm.
+/// Live mode (`live` set): `base` is the live index file / URL instead.
 #[derive(Clone)]
 pub struct Source {
     base: String,
+    live: Option<String>,
 }
 
 impl Source {
     pub fn new(base: impl Into<String>) -> Self {
-        Self { base: base.into() }
+        Self { base: base.into(), live: None }
     }
 
-    /// Last path component (the site name).
+    /// Stream site `id` from NASA; `index` = path (native) or URL (wasm) of live_index.json.
+    pub fn live(id: impl Into<String>, index: impl Into<String>) -> Self {
+        Self { base: index.into(), live: Some(id.into()) }
+    }
+
+    /// The live index (base is the index path / URL itself).
+    pub async fn read_index(&self) -> Result<Vec<u8>, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::fs::read(&self.base).map_err(|e| format!("{}: {e}", self.base))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::live::get(&self.base, None).await
+        }
+    }
+
+    /// Last path component (the site name), or the live site id.
     pub fn name(&self) -> String {
+        if let Some(id) = &self.live {
+            return id.clone();
+        }
         self.base.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("site").to_string()
     }
 
@@ -330,6 +352,8 @@ pub struct LoadOptions {
     pub step: Option<usize>,
     /// use the approximate de-lit a_ tiles instead of t_ where present
     pub albedo: bool,
+    /// live mode: finest post spacing to stream (metres; default ~2)
+    pub live_mpp: Option<f32>,
 }
 
 pub struct LoadedTile {
@@ -350,7 +374,7 @@ pub struct Loaded {
 /// Shared, human-readable loading progress (shown in the HUD while loading).
 pub type Progress = Arc<Mutex<String>>;
 
-fn say(p: &Progress, s: String) {
+pub fn say(p: &Progress, s: String) {
     if let Ok(mut g) = p.lock() {
         *g = s;
     }
@@ -361,10 +385,47 @@ fn pick_chunk(tile_step: usize) -> usize {
     [144usize, 126, 112, 96, 84, 72, 63, 56, 48, 42, 36, 32, 28, 24, 21, 16].into_iter().find(|c| tile_step % c == 0).unwrap_or(tile_step)
 }
 
-/// Load a whole site (heights, textures, decimated meshes). Runs as an async task.
-pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<Loaded, String> {
-    let t0 = bevy::platform::time::Instant::now();
-    say(&progress, "reading meta.json".into());
+/// Texture source of one grid tile.
+pub enum Tex {
+    None,
+    /// a PNG in the site folder (decoded lazily, one tile at a time)
+    File(String),
+    /// already decoded greyscale (0 = nodata, 1..255), width, height
+    Px(Vec<u16>, usize, usize),
+}
+
+pub struct GridTile {
+    pub x: usize,
+    pub y: usize,
+    pub tex: Tex,
+}
+
+/// A site's heightfield and texture sources, from a converted site folder or streamed live.
+pub struct Grid {
+    pub name: String,
+    pub rationale: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub base_m: f64,
+    pub mpp: f32,
+    pub east0: f32,
+    pub north0: f32,
+    pub w: usize,
+    pub h: usize,
+    /// heights above base_m, NaN = nodata
+    pub z: Vec<f32>,
+    /// height quantum (planarity test of the spawn picker)
+    pub quantum: f32,
+    pub sun: Option<(f32, f32)>,
+    /// tile step in posts (tiles are tile_step + 1 posts with a 1-post overlap)
+    pub tile_step: usize,
+    pub tiles: Vec<GridTile>,
+    pub texture_kind: &'static str,
+}
+
+/// Converted site folder (meta.json + h_/t_/a_ PNG tiles) -> Grid.
+async fn png_grid(src: &Source, opts: LoadOptions, progress: &Progress) -> Result<Grid, String> {
+    say(progress, "reading meta.json".into());
     let meta: Meta = serde_json::from_slice(&src.read("meta.json").await?).map_err(|e| format!("meta.json: {e}"))?;
     let [w, h] = meta.grid_px;
     let step_px = meta.tile_px - 1;
@@ -372,7 +433,7 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
     let scale = meta.height_range_m / 65534.0;
     let n_tiles = meta.tiles.len();
     for (i, t) in meta.tiles.iter().enumerate() {
-        say(&progress, format!("heights {}/{n_tiles}", i + 1));
+        say(progress, format!("heights {}/{n_tiles}", i + 1));
         let (px, tw, th) = decode_png(&src.read(&t.height).await?, &t.height)?;
         let (r0, c0) = (t.y * step_px, t.x * step_px);
         for r in 0..th.min(h - r0) {
@@ -384,9 +445,29 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
             }
         }
     }
-    let min_y = z.iter().copied().filter(|v| v.is_finite()).fold(f32::INFINITY, f32::min);
-    let chunk = pick_chunk(step_px);
-    let mut site = Site {
+    let (mut n_albedo, mut n_ortho) = (0, 0);
+    let tiles = meta
+        .tiles
+        .iter()
+        .map(|t| {
+            let tex = match (&t.albedo, &t.texture) {
+                (Some(a), _) if opts.albedo => {
+                    n_albedo += 1;
+                    Tex::File(a.clone())
+                }
+                (_, Some(tx)) => {
+                    n_ortho += 1;
+                    Tex::File(tx.clone())
+                }
+                _ => Tex::None,
+            };
+            GridTile { x: t.x, y: t.y, tex }
+        })
+        .collect();
+    if opts.albedo && n_albedo == 0 {
+        warn!("--albedo: this site has no a_ tiles, using the ortho texture");
+    }
+    Ok(Grid {
         name: src.name(),
         rationale: meta.description.split("rationale for creation was: ").nth(1).unwrap_or(&meta.id)
             .split(". This DTM").next().unwrap_or("").to_string(),
@@ -398,15 +479,60 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
         north0: meta.grid_top_left_m.north,
         w,
         h,
-        z: Arc::new(z),
+        z,
+        quantum: scale as f32,
+        sun: meta.sun.map(|s| (s.azimuth_deg, s.elevation_deg)),
+        tile_step: step_px,
+        tiles,
+        texture_kind: match (n_albedo, n_ortho) {
+            (0, 0) => "none",
+            (_, 0) => "albedo",
+            (0, _) => "ortho",
+            _ => "mixed",
+        },
+    })
+}
+
+/// Read the site's heightfield and texture sources: a converted folder, or live from NASA.
+pub async fn load_grid(src: &Source, opts: LoadOptions, progress: &Progress) -> Result<Grid, String> {
+    match &src.live {
+        Some(id) => {
+            say(progress, "reading the live site index".into());
+            let index = src.read_index().await?;
+            Ok(crate::live::load_grid(index, id, opts.live_mpp, progress).await?.0)
+        }
+        None => png_grid(src, opts, progress).await,
+    }
+}
+
+/// Load a whole site (heights, textures, decimated meshes). Runs as an async task.
+pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<Loaded, String> {
+    let t0 = bevy::platform::time::Instant::now();
+    let g = load_grid(&src, opts, &progress).await?;
+    let (w, h, step_px) = (g.w, g.h, g.tile_step);
+    let n_tiles = g.tiles.len();
+    let min_y = g.z.iter().copied().filter(|v| v.is_finite()).fold(f32::INFINITY, f32::min);
+    let chunk = pick_chunk(step_px);
+    let mut site = Site {
+        name: g.name,
+        rationale: g.rationale,
+        lat: g.lat,
+        lon: g.lon,
+        base_m: g.base_m,
+        mpp: g.mpp,
+        east0: g.east0,
+        north0: g.north0,
+        w,
+        h,
+        z: Arc::new(g.z),
         chunk,
         spawn: Vec3::ZERO,
         min_y: if min_y.is_finite() { min_y } else { 0.0 },
-        sun: meta.sun.map(|s| (s.azimuth_deg, s.elevation_deg)),
-        texture_kind: "none",
+        sun: g.sun,
+        texture_kind: g.texture_kind,
     };
     say(&progress, "choosing a spawn in the dunes".into());
-    site.spawn = pick_spawn(&site, scale as f32);
+    site.spawn = pick_spawn(&site, g.quantum);
 
     // mesh step: keep the whole site under the vertex budget; physics always uses full
     // resolution (and the chunks near the buggy are drawn at full resolution too)
@@ -416,29 +542,18 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
     });
     let per_tile = step_px / chunk;
     let mut tiles = Vec::with_capacity(n_tiles);
-    let (mut n_albedo, mut n_ortho) = (0, 0);
-    for (i, t) in meta.tiles.iter().enumerate() {
+    for (i, t) in g.tiles.into_iter().enumerate() {
         say(&progress, format!("textures + meshes {}/{n_tiles}", i + 1));
-        let file = match (&t.albedo, &t.texture) {
-            (Some(a), _) if opts.albedo => {
-                n_albedo += 1;
-                Some(a)
-            }
-            (_, Some(tx)) => {
-                n_ortho += 1;
-                Some(tx)
-            }
-            _ => None,
-        };
-        let texture = match file {
-            Some(f) => match src.read(f).await {
-                Ok(bytes) => decode_png(&bytes, f).ok().and_then(|(px, tw, th)| texture_image(px, tw, th, f)),
+        let texture = match t.tex {
+            Tex::File(f) => match src.read(&f).await {
+                Ok(bytes) => decode_png(&bytes, &f).ok().and_then(|(px, tw, th)| texture_image(px, tw, th, &f)),
                 Err(e) => {
                     warn!("{e}");
                     None
                 }
             },
-            None => None,
+            Tex::Px(px, tw, th) => texture_image(px, tw, th, &site.name),
+            Tex::None => None,
         };
         let mut chunks = Vec::new();
         for ci in 0..per_tile {
@@ -450,15 +565,6 @@ pub async fn load(src: Source, opts: LoadOptions, progress: Progress) -> Result<
             }
         }
         tiles.push(LoadedTile { row: t.y, col: t.x, texture, chunks });
-    }
-    site.texture_kind = match (n_albedo, n_ortho) {
-        (0, 0) => "none",
-        (_, 0) => "albedo",
-        (0, _) => "ortho",
-        _ => "mixed",
-    };
-    if opts.albedo && n_albedo == 0 {
-        warn!("--albedo: this site has no a_ tiles, using the ortho texture");
     }
     info!("loaded {} ({n_tiles} tiles, far mesh step {step}, chunk {chunk}) in {:.1}s", site.name, t0.elapsed().as_secs_f32());
     Ok(Loaded { site, step, tile_step_px: step_px, tiles })

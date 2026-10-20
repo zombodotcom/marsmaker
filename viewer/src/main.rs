@@ -3,13 +3,16 @@
 //!   marsmaker-viewer [SITE_DIR] [--step N] [--spawn X,Z] [--heading DEG] [--realistic] [--albedo]
 //!                    [--autodrive] [--weave A] [--throttle T] [--seconds N] [--shot OUT.png] [--shot-at T]
 //!                    [--log-every T] [--high-cam]
+//!   marsmaker-viewer --live SITE_ID [--live-index FILE] [--live-mpp M] [--live-dump OUT]
 //!
 //! In the browser the same flags come from the URL query, e.g. `?site=NAME&autodrive&albedo`
 //! (see WEB.md). SITE_DIR is a converted site folder (with meta.json); default is the Russell
-//! Crater megadune. Controls: W/S or arrows = throttle/reverse, A/D = steer, Space = brake,
+//! Crater megadune. `--live SITE_ID` (browser: `?live=SITE_ID`) streams any HiRISE DTM straight
+//! from NASA's public bucket instead (see live.rs and WEB.md). Controls: W/S or arrows = throttle/reverse, A/D = steer, Space = brake,
 //! R = flip upright, C = toggle chase / high camera, Esc = quit. See README.md for the flags.
 
 mod buggy;
+mod live;
 mod terrain;
 
 use bevy::light::CascadeShadowConfigBuilder;
@@ -41,6 +44,12 @@ struct Args {
     shot_at: f32,
     log_every: f32,
     high_cam: bool,
+    /// live mode: site id in live_index.json, the index file / URL, finest post spacing
+    live: Option<String>,
+    live_index: String,
+    live_mpp: Option<f32>,
+    /// native: stream the live site, write OUT.json + OUT.f32 (heights) and exit
+    live_dump: Option<PathBuf>,
 }
 
 impl Args {
@@ -60,6 +69,13 @@ impl Args {
             shot_at: 3.0,
             log_every: 1.0,
             high_cam: false,
+            live: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            live_index: concat!(env!("CARGO_MANIFEST_DIR"), "/web/live_index.json").into(),
+            #[cfg(target_arch = "wasm32")]
+            live_index: "live_index.json".into(),
+            live_mpp: None,
+            live_dump: None,
         };
         let mut it = argv.into_iter();
         let num = |s: Option<String>, flag: &str| -> f32 {
@@ -86,6 +102,10 @@ impl Args {
                 "--shot-at" => a.shot_at = num(it.next(), "--shot-at"),
                 "--log-every" => a.log_every = num(it.next(), "--log-every"),
                 "--site" => a.site = it.next().expect("--site needs a value"),
+                "--live" => a.live = Some(it.next().expect("--live needs a site id")),
+                "--live-index" => a.live_index = it.next().expect("--live-index needs a path"),
+                "--live-mpp" => a.live_mpp = Some(num(it.next(), "--live-mpp")),
+                "--live-dump" => a.live_dump = Some(PathBuf::from(it.next().expect("--live-dump needs a path"))),
                 f if f.starts_with("--") => panic!("unknown flag {f}"),
                 _ => a.site = s,
             }
@@ -120,7 +140,7 @@ impl Args {
         if a.site.is_empty() {
             a.site = DEFAULT_SITE_NAME.into();
         }
-        if !a.site.contains('/') {
+        if !a.site.contains('/') && a.live.is_none() {
             a.site = format!("sites/{}", a.site);
         }
         a
@@ -156,6 +176,16 @@ struct LoadFailed(String);
 fn main() {
     let args = Args::parse();
     let _ = DEFAULT_SITE_NAME;
+    #[cfg(not(target_arch = "wasm32"))]
+    if let (Some(out), Some(id)) = (&args.live_dump, &args.live) {
+        std::process::exit(match live_dump(id, &args.live_index, args.live_mpp, out) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("live dump failed: {e}");
+                1
+            }
+        });
+    }
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -193,10 +223,48 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    let src = Source::new(args.site.clone());
+/// Verification hook: stream a live site and write its grid (OUT.json + little-endian f32 absolute
+/// heights in OUT.f32, NaN = nodata), without starting the app.
+#[cfg(not(target_arch = "wasm32"))]
+fn live_dump(id: &str, index: &str, mpp: Option<f32>, out: &std::path::Path) -> Result<(), String> {
+    let t0 = std::time::Instant::now();
     let progress = Progress::default();
-    let opts = LoadOptions { step: args.step, albedo: args.albedo };
+    let index = std::fs::read(index).map_err(|e| format!("{index}: {e}"))?;
+    let (g, st) = bevy::tasks::block_on(live::load_grid(index, id, mpp, &progress))?;
+    let secs = t0.elapsed().as_secs_f32();
+    let bytes: Vec<u8> = g.z.iter().flat_map(|v| ((*v as f64 + g.base_m) as f32).to_le_bytes()).collect();
+    std::fs::write(out.with_extension("f32"), bytes).map_err(|e| e.to_string())?;
+    let textured = g.tiles.iter().filter(|t| matches!(t.tex, terrain::Tex::Px(..))).count();
+    // texture mosaic on the same grid (u8, 0 = nodata)
+    let mut tex = vec![0u8; g.w * g.h];
+    for t in &g.tiles {
+        if let terrain::Tex::Px(px, tw, th) = &t.tex {
+            for r in 0..*th {
+                for c in 0..*tw {
+                    tex[(t.y * g.tile_step + r) * g.w + t.x * g.tile_step + c] = px[r * tw + c] as u8;
+                }
+            }
+        }
+    }
+    std::fs::write(out.with_extension("tex"), tex).map_err(|e| e.to_string())?;
+    let meta = serde_json::json!({
+        "id": g.name, "title": g.rationale, "w": g.w, "h": g.h, "mpp": g.mpp, "east0": g.east0, "north0": g.north0,
+        "base_m": g.base_m, "lat": g.lat, "lon": g.lon, "sun": g.sun, "tiles": g.tiles.len(), "textured_tiles": textured,
+        "dtm_bytes": st.dtm_bytes, "ortho_bytes": st.ortho_bytes, "dtm_level": st.dtm_level, "ortho_level": st.ortho_level,
+        "seconds": secs,
+    });
+    std::fs::write(out.with_extension("json"), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
+    println!("{meta}");
+    Ok(())
+}
+
+fn setup(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let src = match &args.live {
+        Some(id) => Source::live(id.clone(), args.live_index.clone()),
+        None => Source::new(args.site.clone()),
+    };
+    let progress = Progress::default();
+    let opts = LoadOptions { step: args.step, albedo: args.albedo, live_mpp: args.live_mpp };
     let task = IoTaskPool::get().spawn(terrain::load(src.clone(), opts, progress.clone()));
     commands.insert_resource(Loading { task, progress, name: src.name() });
 
