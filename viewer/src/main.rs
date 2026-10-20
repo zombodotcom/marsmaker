@@ -9,13 +9,15 @@
 //! (see WEB.md). SITE_DIR is a converted site folder (with meta.json); default is the Russell
 //! Crater megadune. `--live SITE_ID` (browser: `?live=SITE_ID`) streams any HiRISE DTM straight
 //! from NASA's public bucket instead (see live.rs and WEB.md). Controls: W/S or arrows = throttle/reverse,
-//! A/D = steer, Space = brake, R = flip upright, M = REAL / FUN mode, C = toggle chase / high camera,
+//! A/D = steer, Space = brake, R = flip upright, M = FUN / REAL / SAND mode, C = toggle chase / high camera,
 //! Esc = quit; FUN mode adds Shift = boost, Ctrl/J = jump, W/S/A/D = pitch/roll in the air. See README.md for the flags.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod bench;
 mod buggy;
 mod live;
+mod sand;
+mod sand_sim;
 mod terrain;
 
 use bevy::light::CascadeShadowConfigBuilder;
@@ -65,6 +67,8 @@ struct Args {
     bench_seconds: f32,
     bench_mode: Option<Mode>,
     bench_patterns: Option<String>,
+    /// REAL SAND mode flags (`--sand-*`, see sand.rs)
+    sand: sand::SandArgs,
 }
 
 impl Args {
@@ -99,6 +103,7 @@ impl Args {
             bench_seconds: 45.0,
             bench_mode: None,
             bench_patterns: None,
+            sand: sand::SandArgs::default(),
         };
         let mut it = argv.into_iter();
         let num = |s: Option<String>, flag: &str| -> f32 {
@@ -117,7 +122,7 @@ impl Args {
                 "--realistic" => a.mode = Mode::Real,
                 "--mode" => {
                     let v = it.next().expect("--mode needs real or fun");
-                    a.mode = Mode::parse(&v).unwrap_or_else(|| panic!("--mode {v}: use real or fun"));
+                    a.mode = Mode::parse(&v).unwrap_or_else(|| panic!("--mode {v}: use real, fun or sand"));
                 }
                 "--gravity-mult" => a.gravity_mult = num(it.next(), "--gravity-mult"),
                 "--script" => a.script = Some(Script::parse(&it.next().expect("--script needs a list"))),
@@ -144,6 +149,7 @@ impl Args {
                     a.bench_mode = Some(Mode::parse(&v).unwrap_or_else(|| panic!("--bench-mode {v}: use real or fun")));
                 }
                 "--live-dump" => a.live_dump = Some(PathBuf::from(it.next().expect("--live-dump needs a path"))),
+                f if sand::SandArgs::takes(f) => a.sand.set(f, it.next().unwrap_or_else(|| panic!("{f} needs a value"))), // REAL SAND
                 f if f.starts_with("--") => panic!("unknown flag {f}"),
                 _ => a.site = s,
             }
@@ -257,6 +263,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() }))
         .insert_resource(if args.high_cam { CamMode { dist: 60.0, height: 25.0, zoom: 1.0 } } else { CamMode { dist: 9.0, height: 3.2, zoom: 1.0 } })
+        .add_plugins(sand::SandPlugin(args.sand.clone())) // REAL SAND mode
         .insert_resource(args)
         .insert_resource(ClearColor(Color::srgb(0.80, 0.62, 0.47)))
         .insert_resource(GlobalAmbientLight { color: Color::srgb(1.0, 0.85, 0.7), brightness: 900.0, ..default() })
@@ -524,6 +531,7 @@ fn hud(
     site: Option<Res<Site>>,
     loading: Option<Res<Loading>>,
     failed: Option<Res<LoadFailed>>,
+    sand_hud: Option<Res<sand::SandHud>>,
     mut q: Query<&mut Text, With<Hud>>,
 ) {
     let Ok(mut text) = q.single_mut() else { return };
@@ -539,8 +547,10 @@ fn hud(
     let (Some(buggy), Some(site)) = (buggy, site) else { return };
     let slope = site.normal(buggy.pos.x, buggy.pos.z).angle_between(Vec3::Y).to_degrees();
     let respawn = if buggy.respawns > 0 { format!("   respawned: {}", buggy.last_respawn) } else { String::new() };
+    // REAL SAND hook: sim time, sinkage, "SIMULATED" notice
+    let sand = sand_hud.map_or(String::new(), |s| if s.0.is_empty() { String::new() } else { format!("\n{}", s.0) });
     text.0 = format!(
-        "{}  ({:.2} N, {:.2} E)\n{}\n\n{:5.1} km/h   elevation {:.0} m   slope {:.0} deg   side {:.0} deg   {}{}\n{}\n\n{}\nHiRISE DTM: NASA/JPL/University of Arizona (CC0)",
+        "{}  ({:.2} N, {:.2} E)\n{}\n\n{:5.1} km/h   elevation {:.0} m   slope {:.0} deg   side {:.0} deg   {}{}\n{}{sand}\n\n{}\nHiRISE DTM: NASA/JPL/University of Arizona (CC0)",
         site.name,
         site.lat,
         site.lon,

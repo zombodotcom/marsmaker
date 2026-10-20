@@ -78,13 +78,13 @@ pub struct Site {
     pub lon: f64,
     pub base_m: f64,
     pub mpp: f32,
-    east0: f32,
-    north0: f32,
-    w: usize,
-    h: usize,
-    z: Arc<Vec<f32>>,
+    pub(crate) east0: f32,
+    pub(crate) north0: f32,
+    pub(crate) w: usize,
+    pub(crate) h: usize,
+    pub(crate) z: Arc<Vec<f32>>,
     /// posts per render chunk edge (divides the tile step and every decimation step)
-    chunk: usize,
+    pub(crate) chunk: usize,
     pub spawn: Vec3,
     /// lowest valid height in the site (world Y); anything far below this is falling forever
     pub min_y: f32,
@@ -92,11 +92,18 @@ pub struct Site {
     pub sun: Option<(f32, f32)>,
     /// texture set actually used ("ortho", "albedo", "mixed" or "none")
     pub texture_kind: &'static str,
+    /// REAL SAND mode: moved sand + tire ruts on top of the DTM (see sand.rs); None = the DTM
+    pub sand: Option<Arc<crate::sand::SandShared>>,
 }
 
 impl Site {
-    fn at(&self, r: usize, c: usize) -> f32 {
-        self.z[r * self.w + c]
+    pub(crate) fn at(&self, r: usize, c: usize) -> f32 {
+        let v = self.z[r * self.w + c];
+        // REAL SAND hook: dune-layer change at this post
+        match &self.sand {
+            Some(s) => v + s.post_delta(r, c),
+            None => v,
+        }
     }
 
     /// World (x, z) -> fractional (row, col) in posts.
@@ -124,10 +131,15 @@ impl Site {
         if !(a.is_finite() && b.is_finite() && cc.is_finite() && d.is_finite()) {
             return None;
         }
-        Some(if fr + fc <= 1.0 {
+        let y = if fr + fc <= 1.0 {
             a + (b - a) * fr + (d - a) * fc
         } else {
             cc + (d - cc) * (1.0 - fr) + (b - cc) * (1.0 - fc)
+        };
+        // REAL SAND hook: tire ruts (fine layer) on top
+        Some(match &self.sand {
+            Some(s) => y + s.rut(r, c),
+            None => y,
         })
     }
 
@@ -534,6 +546,7 @@ pub fn site_from_grid(g: Grid, opts: LoadOptions, progress: &Progress) -> (Site,
         min_y: if min_y.is_finite() { min_y } else { 0.0 },
         sun: g.sun,
         texture_kind: g.texture_kind,
+        sand: None,
     };
     say(progress, "choosing a spawn in the dunes".into());
     // the spawn picker's artefact filters (steep noise, planar TIN facets) need the raw DTM
@@ -854,7 +867,7 @@ fn pick_spawn(site: &Site, quantum: f32) -> Vec3 {
 /// Build the mesh for chunk (cr, cc) at the given step (quads touching nodata are left out).
 /// `snap` = (side mask N=1,S=2,W=4,E=8, coarse step): edge vertices on those sides are put onto the
 /// coarse mesh's straight edges, so a full-res chunk next to a decimated chunk has no cracks.
-fn chunk_mesh(site: &Site, cr: usize, cc: usize, step: usize, tile_step_px: usize, snap: Option<(u8, usize)>) -> Option<Mesh> {
+pub(crate) fn chunk_mesh(site: &Site, cr: usize, cc: usize, step: usize, tile_step_px: usize, snap: Option<(u8, usize)>) -> Option<Mesh> {
     let chunk = site.chunk;
     let (r0, c0) = (cr * chunk, cc * chunk);
     if r0 + 1 >= site.h || c0 + 1 >= site.w {
@@ -903,7 +916,8 @@ fn chunk_mesh(site: &Site, cr: usize, cc: usize, step: usize, tile_step_px: usiz
     for i in 0..n - 1 {
         for j in 0..n - 1 {
             let (a, b, c, d) = (i * n + j, (i + 1) * n + j, (i + 1) * n + j + 1, i * n + j + 1);
-            if ok[a] && ok[b] && ok[c] && ok[d] {
+            // REAL SAND hook: full-res quads under a tire-rut overlay patch are drawn by the overlay
+            if ok[a] && ok[b] && ok[c] && ok[d] && !(step == 1 && crate::sand::quad_hidden(site, r0 + i, c0 + j)) {
                 // counter-clockwise seen from above (+Y); diagonal b-d (matches Site::height)
                 idx.extend_from_slice(&[a as u32, b as u32, d as u32, b as u32, c as u32, d as u32]);
             }
@@ -932,11 +946,11 @@ struct Pending {
 /// Render bookkeeping: decimated chunks everywhere, a full-res window around the buggy.
 #[derive(Resource)]
 pub struct TerrainRender {
-    step: usize,
-    tile_step_px: usize,
-    materials: HashMap<(usize, usize), Handle<StandardMaterial>>, // per tile (row, col)
-    coarse: HashMap<(usize, usize), Entity>,                        // per chunk (row, col)
-    fine: HashMap<(usize, usize), (Entity, Handle<Mesh>, u8)>,
+    pub(crate) step: usize,
+    pub(crate) tile_step_px: usize,
+    pub(crate) materials: HashMap<(usize, usize), Handle<StandardMaterial>>, // per tile (row, col)
+    pub(crate) coarse: HashMap<(usize, usize), Entity>,                        // per chunk (row, col)
+    pub(crate) fine: HashMap<(usize, usize), (Entity, Handle<Mesh>, u8)>,
     /// window centre the current `fine` set (or the pending rebuild) is for
     center: Option<(i64, i64)>,
     pending: Option<Pending>,

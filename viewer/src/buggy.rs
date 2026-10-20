@@ -77,7 +77,8 @@ const AUTO_FLIP_SECS: f32 = 1.5;
 /// airborne longer than this counts as a jump in the stunt stats
 const STUNT_MIN_AIR: f32 = 0.35;
 
-/// The two driving modes. Toggle in game with M, or `--mode real|fun` (`?mode=` in the browser).
+/// The driving modes. Cycle in game with M (FUN -> REAL -> SAND), or `--mode real|fun|sand`
+/// (`?mode=` in the browser).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Mode {
     /// Mars as it is: loose-sand tires, a light sand rail's power (~60 km/h), no assists.
@@ -85,6 +86,8 @@ pub enum Mode {
     /// Ignores realism where that's more fun: grip, power, boost, jump, air control, auto-flip.
     #[default]
     Fun,
+    /// REAL SAND: REAL MARS tires on sand that moves (dunes, ruts, sinkage; see sand.rs).
+    Sand,
 }
 
 impl Mode {
@@ -92,25 +95,29 @@ impl Mode {
         match s.to_ascii_lowercase().as_str() {
             "real" | "realistic" => Some(Mode::Real),
             "fun" | "arcade" => Some(Mode::Fun),
+            "sand" | "real-sand" => Some(Mode::Sand),
             _ => None,
         }
     }
     pub fn other(self) -> Self {
         match self {
-            Mode::Real => Mode::Fun,
             Mode::Fun => Mode::Real,
+            Mode::Real => Mode::Sand,
+            Mode::Sand => Mode::Fun,
         }
     }
     pub fn label(self) -> &'static str {
         match self {
             Mode::Real => "REAL MARS",
             Mode::Fun => "JUST FOR FUN",
+            Mode::Sand => "REAL SAND",
         }
     }
     pub fn short(self) -> &'static str {
         match self {
             Mode::Real => "real",
             Mode::Fun => "fun",
+            Mode::Sand => "sand",
         }
     }
 }
@@ -169,6 +176,9 @@ impl Tuning {
     pub fn new(mode: Mode, gravity_mult: f32) -> Self {
         let gravity_mult = if gravity_mult.is_finite() && gravity_mult > 0.0 { gravity_mult } else { 1.0 };
         let mut t = match mode {
+            // REAL SAND: REAL MARS with a firm-ground rolling resistance; sand.rs adds the
+            // sinkage drag and grip loss per wheel from the actual sand under it
+            Mode::Sand => return Self { mode, roll_crr: 0.03, ..Self::new(Mode::Real, gravity_mult) },
             Mode::Real => Self {
                 mode,
                 gravity_mult,
@@ -527,6 +537,7 @@ impl Buggy {
         let hint = match mode {
             Mode::Real => "loose sand, real power, no assists",
             Mode::Fun => "Shift boost, Ctrl/J jump, air control",
+            Mode::Sand => "moving dunes, ruts, soft sand; [ ] time-lapse",
         };
         self.say(format!("{} MODE  ({hint})", mode.label()), 2.5);
         info!("MODE -> {} at ({:.1}, {:.1}, {:.1}) speed {:.1} km/h", mode.label(), self.pos.x, self.pos.y, self.pos.z, self.vel.length() * 3.6);
@@ -587,7 +598,8 @@ impl Buggy {
     /// Control help line for the HUD, per mode.
     pub fn hud_help(&self) -> &'static str {
         match self.tuning.mode {
-            Mode::Real => "W/S throttle  A/D steer  Space brake  R flip upright  M fun mode  C camera  Esc quit",
+            Mode::Real => "W/S throttle  A/D steer  Space brake  R flip upright  M sand mode  C camera  Esc quit",
+            Mode::Sand => "W/S throttle  A/D steer  Space brake  R flip  [ ] time-lapse  , . wind  K real DTM  M fun  C cam  Esc",
             Mode::Fun => {
                 "W/S throttle  A/D steer  Space brake  Shift boost  Ctrl/J jump  air: W/S pitch A/D roll  R flip  M real  C cam  Esc"
             }
@@ -963,6 +975,8 @@ impl Buggy {
             let fwd = (wheel_fwd - n * wheel_fwd.dot(n)).normalize_or_zero();
             let right = fwd.cross(n);
             let (v_long, v_lat) = (v.dot(fwd), v.dot(right));
+            // REAL SAND hook: sinkage / ruts, extra rolling resistance and grip in soft sand
+            let sand = crate::sand::wheel(site, i, tu.mode, contact, n, load, fwd, v, h);
             let mut f_long = if ctl.brake {
                 -v_long.clamp(-1.0, 1.0) * BRAKE / 4.0
             } else {
@@ -970,12 +984,12 @@ impl Buggy {
                 ctl.throttle * tu.engine / 4.0 * if ctl.throttle * v_long < 0.0 { 1.0 } else { taper }
             };
             // rolling resistance in sand (viscous + load-proportional sinkage drag)
-            f_long -= v_long * tu.roll_visc + tu.roll_crr * load * v_long.clamp(-1.0, 1.0);
+            f_long -= v_long * tu.roll_visc + (tu.roll_crr + sand.crr) * load * v_long.clamp(-1.0, 1.0);
             if ctl.throttle == 0.0 && !ctl.brake && v_long.abs() < 1.0 {
                 f_long -= v_long * 3000.0; // idle hold (engine braking / handbrake) so it settles on slopes
             }
             let mut f_lat = -v_lat * tu.corner / 4.0;
-            let grip = load * tu.grip_mult;
+            let grip = load * tu.grip_mult * sand.grip;
             let (cap_long, cap_lat) = ((tu.mu * grip).max(1e-3), (tu.mu_lat * grip).max(1e-3));
             let ft;
             if tu.lat_priority {
@@ -987,6 +1001,7 @@ impl Buggy {
             } else {
                 // friction ellipse; sliding grip falls off with the overload (slip_falloff)
                 let k = ((f_long / cap_long).powi(2) + (f_lat / cap_lat).powi(2)).sqrt();
+                crate::sand::wheel_slip(site, i, tu.mode, k); // REAL SAND hook: wheelspin digs in
                 let mut f = fwd * f_long + right * f_lat;
                 if k > 1.0 {
                     let slip = (k - 1.0).clamp(0.0, 1.0);

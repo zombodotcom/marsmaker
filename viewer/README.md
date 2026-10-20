@@ -12,8 +12,8 @@ megadune, `D:\marsmaker_data\sites\PSP_007018_1255_PSP_007229_1255`.
 
 ## Modes
 
-Two driving modes, shown in the HUD. Press **M** to switch live (keeps position and speed), or
-start in one with `--mode real|fun` (`?mode=real|fun` in the browser).
+Three driving modes, shown in the HUD. Press **M** to cycle FUN -> REAL -> SAND live (keeps position
+and speed), or start in one with `--mode fun|real|sand` (`?mode=fun|real|sand` in the browser).
 
 - **JUST FOR FUN** (default): ignores realism where that's more fun. Grippy tires (mu 1.1 on an
   Earth-like load, so Mars' low gravity doesn't leave them skating), a cornering-first friction
@@ -32,8 +32,12 @@ start in one with `--mode real|fun` (`?mode=real|fun` in the browser).
   ellipse of mu 0.48 / 0.58 whose grip falls off with slip, load-proportional sinkage drag, and a
   light sand rail's power (2600 N at the wheels, ~60 km/h on the flat). No boost, jump, air
   control or assists.
+- **REAL SAND** (`--mode sand`, `?mode=sand`): REAL MARS on sand that behaves like sand. See
+  *REAL SAND* below. The dunes move (time-lapse with **[** / **]**), the wheels leave ruts and
+  sink in, and anything you see changed is a simulation: the HUD then says
+  "SIMULATED - not NASA data" until you press **K** (back to the real DTM).
 
-Both use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for floaty jumps).
+All use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for floaty jumps).
 
 ## Controls
 
@@ -44,7 +48,10 @@ Both use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for 
 | Space | brake |
 | Shift | boost (FUN) |
 | Ctrl or J | jump (FUN; in the browser use J, since Ctrl+W closes the tab) |
-| M | switch REAL MARS / JUST FOR FUN |
+| M | cycle JUST FOR FUN -> REAL MARS -> REAL SAND |
+| [ / ] | REAL SAND: slower / faster time-lapse (paused, real time ... 1 Mars year per second) |
+| , / . | REAL SAND: turn the wind 15 deg left / right |
+| K | REAL SAND: put the sand back (the real DTM again) |
 | R | flip upright where you are |
 | C | toggle chase camera / high camera |
 | Mouse wheel | zoom the camera in / out (C resets) |
@@ -54,7 +61,13 @@ Both use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for 
 
 | Flag | Meaning |
 | --- | --- |
-| `--mode real\|fun` | start in REAL MARS or JUST FOR FUN (default fun). See Modes above and `Tuning` in `src/buggy.rs`. |
+| `--mode real\|fun\|sand` | start in REAL MARS, JUST FOR FUN or REAL SAND (default fun). See Modes above and `Tuning` in `src/buggy.rs`. |
+| `--sand-rate R` | REAL SAND: start the time-lapse at R Mars years per second (default real time). |
+| `--sand-wind DEG` | REAL SAND: compass direction the sand moves *toward* (default: estimated from the slip faces). |
+| `--sand-flux Q` | REAL SAND: saturated sand flux, m^3 per m per Earth year (default 5). |
+| `--sand-region M` | REAL SAND: edge of the simulated square in metres (default 1024). |
+| `--sand-shots NAME@T,...` | REAL SAND test hook: at T s save NAME.png (screenshot), NAME_before/after/diff.png (hillshade of the simulated square before / now, and the height change; wind blows left to right) and log a `SAND DUMP` stats line. |
+| `--sand-log T` | REAL SAND log period (default 1 s). |
 | `--realistic` | same as `--mode real`. |
 | `--gravity-mult G` | multiply Mars gravity by G (default 1). |
 | `--albedo` | use the approximate de-lit `a_` tiles (converter v3) instead of the ortho `t_` tiles, where present. Lighting follows the image's sun (meta `sun`) either way. |
