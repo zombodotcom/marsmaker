@@ -73,6 +73,44 @@ and speed), or start in one with `--mode fun|real|sand` (`?mode=fun|real|sand` i
 
 All use Mars gravity (3.711 m/s^2). `--gravity-mult G` scales it (e.g. 0.5 for floaty jumps).
 
+## MARSSCAPE (src/mmo/)
+
+An old-school, tick-based space-fantasy RPG on the same real terrain: the menu's **MARSSCAPE**
+card, `--mode scape`, or `?mode=scape` in the browser. No buggy: you're an astronaut on a 2 m tile
+grid (tiles steeper than 30 deg, or without data, are blocked), and the world ticks every 600 ms.
+Lore: ancient Martians sealed something beneath the planet, and now rifts are tearing open into
+the void.
+
+- **Skills** (classic 1-99 XP curve): Mining (regolith, ice from 15, hematite from 30), Survey
+  (layered outcrops -> core samples), Fabrication at the fabricator (bricks, water, medkits, iron
+  plates, drill bits, Blaster, Pulse Rifle, Plasma Cannon), Ranged, Defence, Hitpoints (starts at 10).
+- **Combat**: void creatures pour out of the rifts - Void Skitters (5), Dust Stalkers (20), Rift
+  Golems (45) and a Void Leviathan (90). They go for players within 5 tiles. Equip a gun from the
+  pack and left-click a creature. Die and you're back at the landing site, without your weapon.
+  Medkits heal 20. Loot: Xeno Chitin, Void Crystals (they stack), sometimes guns.
+- **Colonists**: a quartermaster with a starter kit, a guard who joins your fights (say *help* or
+  *follow me* in chat for a two-minute escort, *stop* to send him back), a medic who patches you up
+  under half health, a miner and a surveyor. Green name tags, with their job.
+- **Online**: connects to `wss://marsscape.tommysciano.workers.dev` (one world per site, see
+  server/PROTOCOL.md). `--mmo-server URL` / `?mmo=URL` picks another server; `offline` (or an
+  unreachable server) plays an offline world that runs the same rules on your machine, with its
+  own colonists. Your name and login token are remembered (config folder / localStorage).
+- Creature looks are one table (`mmo/look.rs`, `ENEMY_LOOKS`) and their stats another
+  (`mmo/proto.rs`, `CREATURES`).
+
+| Key | Action |
+| --- | --- |
+| Left-click | walk there / mine / survey / use / attack (the top-left text says what) |
+| Right-click | all options (examine, walk here, ...) |
+| Arrows, middle-drag | turn the camera; mouse wheel zooms; the N button faces north |
+| R or the orb | walk / run (run = 2 tiles a tick); Shift+click runs once |
+| Enter | type in chat, Enter sends |
+| F1 / F2 / F3 | pack / skills / gear tab |
+| Esc | pause menu |
+
+Test hook: `--mmo-name NAME --mmo-script "wait:2,walk:6,3,act:regolith@8,tab:skills,shot:a.png,quit"`
+(steps in `mmo/mod.rs`, `ScriptRun`). With `--mmo-name` the run never reads or stores a login token.
+
 ## Controls
 
 | Key | Action |

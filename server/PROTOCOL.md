@@ -156,8 +156,8 @@ inventory, clamped to 0.05–0.95.
 | `brick` | 1 | 2 regolith | 12 |
 | `water` | 10 | 1 ice | 22 |
 | `medkit` | 15 | 1 water + 1 sample | 30 |
-| `pistol` | 20 | 2 iron_plate | 60 |
-| `iron_plate` | 25 | 2 hematite | 45 |
+| `iron_plate` | 20 | 2 hematite | 45 |
+| `pistol` | 25 | 2 iron_plate | 60 |
 | `drill_bit` | 35 | 1 sample + 1 iron_plate | 90 |
 | `rifle` | 40 | 4 iron_plate + 1 drill_bit | 140 |
 | `plasma_gun` | 60 | 3 iron_plate + 5 void_crystal | 300 |

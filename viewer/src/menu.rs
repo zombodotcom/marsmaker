@@ -48,12 +48,16 @@ pub struct ModeEntry {
 pub const MODES: &[ModeEntry] = &[
     ModeEntry { key: "fun", label: "FUN", blurb: "Arcade handling that ignores real physics: big grip and power, Shift boost, Ctrl/J jump, air control, auto-flip.", reload: false },
     ModeEntry { key: "real", label: "REAL", blurb: "Mars as it is: 3.71 m/s2 gravity, loose-sand tyres, a light buggy's real power, no assists. Still a game model.", reload: false },
+    ModeEntry { key: "scape", label: "MARSSCAPE", blurb: "Old-school space-fantasy RPG on the real terrain: click to walk the tiles, mine ice and hematite, build blasters, fight the void creatures pouring out of the rifts, chat with other players. Offline world if no server.", reload: true },
     ModeEntry { key: "sand", label: "SAND", blurb: "Experimental: moving dunes (time-lapse with [ ]), ruts and soft sand you can bog down in. The sand reshapes, so the terrain stops matching the real data (K puts it back).", reload: false },
 ];
 
 fn mode_available(i: usize) -> bool {
-    MODES.get(i).is_some_and(|m| Mode::parse(m.key).is_some())
+    MODES.get(i).is_some_and(|m| m.key == SCAPE || Mode::parse(m.key).is_some())
 }
+
+/// MARSSCAPE isn't a driving mode: `Args::scape` instead of `Args::mode`.
+const SCAPE: &str = "scape";
 
 fn mode_index(m: Mode) -> usize {
     MODES.iter().position(|e| Mode::parse(e.key) == Some(m)).unwrap_or(0)
@@ -315,7 +319,7 @@ fn setup_menu(mut commands: Commands, args: Res<Args>, mut cat: ResMut<Catalog>)
         Some(id) => Where::Live(id.clone()),
         None => Where::Local(args.site.clone()),
     });
-    let mode = mode_index(args.mode);
+    let mode = if args.scape { MODES.iter().position(|m| m.key == SCAPE).unwrap_or(0) } else { mode_index(args.mode) };
     commands.insert_resource(Menu {
         open: args.menu,
         page: Page::About,
@@ -683,8 +687,10 @@ fn apply_msgs(
             Msg::Link => open_link(REPO_URL),
             Msg::Play => {
                 let Some(e) = menu.sel_site.and_then(|i| cat.entries.get(i)).cloned() else { continue };
-                let Some(mode) = Mode::parse(MODES[menu.sel_mode].key) else { continue };
+                let scape = MODES[menu.sel_mode].key == SCAPE;
+                let Some(mode) = (if scape { Some(Mode::Fun) } else { Mode::parse(MODES[menu.sel_mode].key) }) else { continue };
                 args.mode = mode;
+                args.scape = scape;
                 args.smooth = SMOOTHS[menu.sel_smooth].0;
                 *ctl = Controls::default();
                 if !menu.reload_needed(&cat) && failed.is_none() {
@@ -1071,6 +1077,7 @@ fn page_about(p: &mut ChildSpawnerCommands, b: &mut Builder) {
             "Heights are accurate to about a few decimetres, but the resolution is about 1-4 m per post: rocks and ripples smaller than that are not there.",
             "FUN mode ignores real physics on purpose. REAL mode uses Mars gravity and loose-sand tyres, but it is still a game model.",
             "SAND mode is a simulation: the dunes move and the terrain changes, so it no longer matches the real data.",
+            "MARSSCAPE is space fantasy on real ground: the ice, ore, rifts and creatures are made up. Online chat is other people - be kind.",
             "This is a game, not a scientific tool - please don't use it for measurements or mission planning.",
             "Code: MIT licence, github.com/zombodotcom/marsmaker",
         ];

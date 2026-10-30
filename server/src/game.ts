@@ -93,9 +93,9 @@ export interface Recipe {
 export const RECIPES: Recipe[] = [
   { id: "brick", level: 1, xp: 12, inputs: { regolith: 2 }, output: "brick", ticks: 3, text: "You sinter the regolith into a brick." },
   { id: "water", level: 10, xp: 22, inputs: { ice: 1 }, output: "water", ticks: 3, text: "You melt the ice into a flask of water." },
-  { id: "iron_plate", level: 25, xp: 45, inputs: { hematite: 2 }, output: "iron_plate", ticks: 3, text: "You smelt the hematite into an iron plate." },
+  { id: "iron_plate", level: 20, xp: 45, inputs: { hematite: 2 }, output: "iron_plate", ticks: 3, text: "You smelt the hematite into an iron plate." },
   { id: "medkit", level: 15, xp: 30, inputs: { water: 1, sample: 1 }, output: "medkit", ticks: 3, text: "You pack a medkit." },
-  { id: "pistol", level: 20, xp: 60, inputs: { iron_plate: 2 }, output: "pistol", ticks: 4, text: "You assemble a blaster." },
+  { id: "pistol", level: 25, xp: 60, inputs: { iron_plate: 2 }, output: "pistol", ticks: 4, text: "You assemble a blaster." },
   { id: "rifle", level: 40, xp: 140, inputs: { iron_plate: 4, drill_bit: 1 }, output: "rifle", ticks: 5, text: "You assemble a pulse rifle." },
   { id: "plasma_gun", level: 60, xp: 300, inputs: { iron_plate: 3, void_crystal: 5 }, output: "plasma_gun", ticks: 6, text: "You bind the void crystals into a plasma cannon. It hums." },
   { id: "drill_bit", level: 35, xp: 90, inputs: { sample: 1, iron_plate: 1 }, output: "drill_bit", ticks: 5, text: "You machine a drill bit. Mining feels easier with it." },

@@ -88,6 +88,13 @@ OVERLAY = r"""
         b.addEventListener('contextmenu', (e) => e.preventDefault());
       });
       window.mmSendKey = send;  // for scripted tests
+      // MARSSCAPE is played with the mouse: its own help, no driving buttons
+      if (/[?&](mode=(scape|marsscape|mmo)|mmo)(&|=|$)/.test(location.search)) {
+        help.innerHTML = '<b>MarsScape</b><br><kbd>Left-click</kbd> walk / mine / attack &nbsp;<kbd>Right-click</kbd> options<br>' +
+          '<kbd>&larr;</kbd><kbd>&rarr;</kbd> or middle-drag: camera &nbsp; wheel: zoom &nbsp;<kbd>R</kbd> run<br>' +
+          '<kbd>Enter</kbd> chat (say <i>help</i> for a guard escort) &nbsp;<kbd>Esc</kbd> menu';
+        document.getElementById('mm-touch').remove();
+      }
     })();
   </script>
 """

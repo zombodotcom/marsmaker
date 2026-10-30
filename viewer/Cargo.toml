@@ -23,13 +23,15 @@ opt-level = 3
 # native live mode: HTTP Range requests
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# MarsScape online play: WebSocket client (wss via rustls)
+tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 
 # browser build (wasm32-unknown-unknown): site files are fetched over HTTP, flags come from the URL
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4.79"
 js-sys = "0.3.106"
-web-sys = { version = "0.3.106", features = ["Window", "Location", "Response", "Request", "RequestInit", "RequestMode", "Headers"] }
+web-sys = { version = "0.3.106", features = ["Window", "Location", "Response", "Request", "RequestInit", "RequestMode", "Headers", "WebSocket", "MessageEvent", "CloseEvent", "Event", "BinaryType", "Storage"] }
 
 # size-optimised profile for the browser build: cargo build --profile web --target wasm32-unknown-unknown
 [profile.web]

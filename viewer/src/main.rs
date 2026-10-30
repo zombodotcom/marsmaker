@@ -4,6 +4,7 @@
 //!                    [--autodrive] [--weave A] [--throttle T] [--seconds N] [--shot OUT.png] [--shot-at T]
 //!                    [--log-every T] [--high-cam] [--low] [--cam-zoom Z] [--gravity-mult G] [--script jump@3,boost@4-6,mode@8]
 //!   marsmaker-viewer --live SITE_ID [--live-index FILE] [--live-mpp M] [--live-dump OUT]
+//!   marsmaker-viewer --mode scape [--mmo-server URL] [--mmo-name NAME] [--mmo-script STEPS]   (MARSSCAPE, see mmo/mod.rs)
 //!
 //! In the browser the same flags come from the URL query, e.g. `?site=NAME&autodrive&albedo`
 //! (see WEB.md). SITE_DIR is a converted site folder (with meta.json); default is the Russell
@@ -20,6 +21,7 @@ mod live;
 mod sand;
 mod sand_sim;
 mod menu; // [menu] main / pause menu
+mod mmo; // MARSSCAPE online RPG mode
 mod sites; // [menu] site catalogue for the menu
 mod terrain;
 mod visuals;
@@ -81,6 +83,9 @@ struct Args {
     sites_dir: String,
     menu_script: Option<String>,
     window: Option<(u32, u32)>,
+    /// MARSSCAPE mode instead of the buggy (`--mode scape`), and its options
+    scape: bool,
+    mmo: mmo::MmoArgs,
 }
 
 impl Args {
@@ -125,8 +130,10 @@ impl Args {
             sites_dir: "sites".into(),
             menu_script: None,
             window: None,
+            scape: false,
+            mmo: mmo::MmoArgs::default(),
         };
-        let mut it = argv.into_iter();
+        let mut it = argv.into_iter().peekable();
         let num = |s: Option<String>, flag: &str| -> f32 {
             s.and_then(|s| s.parse().ok()).unwrap_or_else(|| panic!("{flag} needs a number"))
         };
@@ -143,8 +150,22 @@ impl Args {
                 "--realistic" => a.mode = Mode::Real,
                 "--mode" => {
                     let v = it.next().expect("--mode needs real or fun");
-                    a.mode = Mode::parse(&v).unwrap_or_else(|| panic!("--mode {v}: use real, fun or sand"));
+                    if matches!(v.as_str(), "scape" | "marsscape" | "mmo") {
+                        a.scape = true;
+                    } else {
+                        a.mode = Mode::parse(&v).unwrap_or_else(|| panic!("--mode {v}: use real, fun, sand or scape"));
+                    }
                 }
+                // MARSSCAPE: `--mmo [URL]` (browser `?mmo=wss://...`) plays it, on that server if given
+                "--mmo" => {
+                    a.scape = true;
+                    if it.peek().is_some_and(|v| !v.starts_with("--")) {
+                        a.mmo.server = it.next().unwrap();
+                    }
+                }
+                "--mmo-server" => a.mmo.server = it.next().expect("--mmo-server needs a ws:// or wss:// URL"),
+                "--mmo-name" => a.mmo.name = Some(it.next().expect("--mmo-name needs a name")),
+                "--mmo-script" => a.mmo.script = Some(it.next().expect("--mmo-script needs a list")),
                 "--gravity-mult" => a.gravity_mult = num(it.next(), "--gravity-mult"),
                 "--script" => a.script = Some(Script::parse(&it.next().expect("--script needs a list"))),
                 "--albedo" => a.albedo = true,
@@ -194,7 +215,7 @@ impl Args {
 
     /// [menu] Interactive start (no site / live id, no test flags): show the main menu first.
     fn wants_menu(&self) -> bool {
-        self.site.is_empty() && self.live.is_none() && self.shot.is_none() && self.seconds.is_none() && !self.autodrive && self.script.is_none()
+        self.site.is_empty() && self.live.is_none() && self.shot.is_none() && self.seconds.is_none() && !self.autodrive && self.script.is_none() && self.mmo.script.is_none()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -315,6 +336,7 @@ fn main() {
         .init_resource::<Controls>()
         .init_resource::<RunClock>()
         .add_plugins(menu::MenuPlugin) // [menu]
+        .add_plugins(mmo::MmoPlugin) // MARSSCAPE
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -409,7 +431,9 @@ fn begin_load(mut commands: Commands, args: Res<Args>, mut meshes: ResMut<Assets
     let task = IoTaskPool::get().spawn(terrain::load(src.clone(), opts, progress.clone()));
     commands.insert_resource(Loading { task, progress, name: src.name() });
 
-    buggy::spawn_visuals(&mut commands, &mut meshes, &mut materials);
+    if !args.scape {
+        buggy::spawn_visuals(&mut commands, &mut meshes, &mut materials);
+    }
 }
 
 /// When the background load finishes: spawn terrain + buggy, aim the sun, place the camera.
@@ -445,8 +469,10 @@ fn finish_load(
     info!("spawn at ({:.1}, {:.1}, {:.1}), textures: {}", site.spawn.x, site.spawn.y, site.spawn.z, site.texture_kind);
     let render = terrain::spawn_terrain(&mut commands, tiles, step, tile_step_px, &mut meshes, &mut images, &mut materials);
     commands.insert_resource(render);
-    let tuning = Tuning::new(args.mode, args.gravity_mult);
-    commands.insert_resource(Buggy::new(&site, site.spawn, -args.heading.to_radians(), tuning));
+    if !args.scape {
+        let tuning = Tuning::new(args.mode, args.gravity_mult);
+        commands.insert_resource(Buggy::new(&site, site.spawn, -args.heading.to_radians(), tuning));
+    }
 
     // light from the image's sun (so the ortho's baked shading agrees with ours, and the de-lit
     // albedo gets re-lit the way it was photographed); keep it >= 20 deg up so lee sides stay readable
@@ -538,12 +564,14 @@ fn fine_window(
     mut commands: Commands,
     site: Option<Res<Site>>,
     buggy: Option<Res<Buggy>>,
+    focus: Option<Res<mmo::Focus>>,
     render: Option<ResMut<TerrainRender>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut vis: Query<&mut Visibility>,
 ) {
-    let (Some(site), Some(buggy), Some(mut render)) = (site, buggy, render) else { return };
-    terrain::update_fine_window(&mut commands, &site, &mut render, &mut meshes, &mut vis, buggy.pos);
+    let at = buggy.map(|b| b.pos).or(focus.map(|f| f.0)); // the buggy, or the MARSSCAPE character
+    let (Some(site), Some(at), Some(mut render)) = (site, at, render) else { return };
+    terrain::update_fine_window(&mut commands, &site, &mut render, &mut meshes, &mut vis, at);
 }
 
 fn chase_camera(
@@ -587,7 +615,12 @@ fn hud(
         text.0 = format!("Loading {} ...\n{p}", l.name);
         return;
     }
-    let (Some(buggy), Some(site)) = (buggy, site) else { return };
+    let (Some(buggy), Some(site)) = (buggy, site) else {
+        if !text.0.is_empty() {
+            text.0.clear(); // MARSSCAPE: no driving HUD
+        }
+        return;
+    };
     let slope = site.normal(buggy.pos.x, buggy.pos.z).angle_between(Vec3::Y).to_degrees();
     let respawn = if buggy.respawns > 0 { format!("   respawned: {}", buggy.last_respawn) } else { String::new() };
     // REAL SAND hook: sim time, sinkage, "SIMULATED" notice

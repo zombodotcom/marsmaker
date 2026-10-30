@@ -28,6 +28,8 @@
       console.error(e);
     });
     document.getElementById('bevy').focus();
+    // MARSSCAPE uses right-click menus
+    document.getElementById('bevy').addEventListener('contextmenu', (e) => e.preventDefault());
     // the site picker links back to this page under whatever name it is served as
     const page = location.pathname.split('/').pop();
     if (page && page !== 'index.html') document.getElementById('sites').href = 'live.html?play=' + encodeURIComponent(page);

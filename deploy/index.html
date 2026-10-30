@@ -120,6 +120,7 @@
       with nothing to install.</p>
     <div class="hero-actions">
       <a class="btn" id="quick" href="play.html">&#9654; Play Russell Crater</a>
+      <a class="btn ghost" href="play.html?site=PSP_007018_1255_PSP_007229_1255&mode=scape">&#9654; MarsScape: online space RPG</a>
       <a class="btn ghost" href="live.html">Any of 1,262 sites, live from NASA</a>
       <a class="btn ghost" href="#controls">Controls</a>
       <a class="btn ghost" href="https://github.com/zombodotcom/marsmaker">Source on GitHub</a>
@@ -132,7 +133,8 @@
       <span class="mode" role="radiogroup" aria-label="Driving mode"><span class="seg">
         <label><input type="radio" name="mode" value="fun" id="o-mode-fun"><span>FUN</span></label>
         <label><input type="radio" name="mode" value="real" id="o-mode-real"><span>REAL</span></label>
-        <label><input type="radio" name="mode" value="sand" id="o-mode-sand"><span>SAND</span></label></span>
+        <label><input type="radio" name="mode" value="sand" id="o-mode-sand"><span>SAND</span></label>
+        <label><input type="radio" name="mode" value="scape" id="o-mode-scape"><span>MARSSCAPE</span></label></span>
         <small id="mode-note"></small></span>
       <label class="sw"><input type="checkbox" id="o-albedo"> De-lit albedo <small>(where available)</small></label>
       <label class="sw"><input type="checkbox" id="o-highcam"> Start in high camera</label>
@@ -197,7 +199,8 @@
   const opts = ['albedo', 'highcam', 'autodrive', 'low'];
   const flag = { albedo: 'albedo', highcam: 'high-cam', autodrive: 'autodrive', low: 'low' };
   const modeNote = { fun: 'boost, jump, air control, extra grip', real: 'loose sand, real power, no assists',
-    sand: 'experimental: simulated moving dunes, changes the terrain' };
+    sand: 'experimental: simulated moving dunes, changes the terrain',
+    scape: 'old-school online RPG on foot: mine, build blasters, fight void creatures, chat' };
   const box = {};
   let store = {};
   try { store = JSON.parse(localStorage.getItem('mm-opts') || '{}'); } catch (e) {}
