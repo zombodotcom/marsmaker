@@ -1,0 +1,12 @@
+name = "marsscape"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# One Durable Object per Mars site ("room"). SQLite-backed storage works on the free plan.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

@@ -11,3 +11,9 @@ sites/
 # hirise2engine.py single-site output
 out/
 *.glb
+
+# MarsScape server
+server/node_modules/
+server/.wrangler/
+server/.wrangler_dev.log
+server/.dev.vars
