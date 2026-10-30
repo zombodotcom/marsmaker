@@ -114,7 +114,8 @@ async function main() {
   for (const b of bots.slice(1)) await b.connect();
   const join = await bots[0].wait((m) => m.t === "join" && m.id === bots[N - 1].id);
   check(!!join, "first bot sees later bots join");
-  check(bots[N - 1].welcome.players.length === N - 1, "welcome lists the players already online");
+  check(bots[N - 1].welcome.players.filter((p) => !p.bot).length === N - 1, "welcome lists the players already online");
+  check(bots[N - 1].welcome.players.some((p) => p.bot && p.role), "welcome lists the room's colonists (bot + role)");
   check(JSON.stringify(bots[1].welcome.nodes.map((n) => [n.kind, n.tx, n.tz])) === JSON.stringify(w.nodes.map((n) => [n.kind, n.tx, n.tz])),
     "every player gets the same node layout");
 
@@ -158,9 +159,12 @@ async function main() {
   // craft a brick at the fabricator
   const fab = a.nodes.find((n) => n.kind === "fabricator");
   check(await a.walkNextTo(fab.tx, fab.tz), "walked to the fabricator");
+  // the quartermaster colonist hands out a starter kit (3 bricks + a medkit) near the fabricator
+  await a.wait((m) => m.t === "msg" && /starter kit/.test(m.text), 3000);
+  const bricks0 = a.count("brick");
   a.send({ t: "craft", recipe: "brick" });
   await a.wait((m) => m.t === "xp" && m.skill === "fabrication", 8000);
-  check(a.count("brick") === 1 && a.count("regolith") === 0, "crafted regolith -> brick");
+  check(a.count("brick") === bricks0 + 1 && a.count("regolith") === 0, "crafted regolith -> brick");
   a.send({ t: "craft", recipe: "iron_plate" });
   check(!!(await a.wait((m) => m.t === "msg" && /level/.test(m.text), 3000)), "recipe level requirement enforced");
 
@@ -169,7 +173,7 @@ async function main() {
   const slot = a.inv.findIndex((s) => s?.item === "brick");
   a.send({ t: "drop", slot });
   await a.wait((m) => m.t === "inv", 3000);
-  check(a.count("brick") === 0, "drop empties the slot");
+  check(slot >= 0 && a.inv[slot] === null, "drop empties the slot");
 
   // combat: punch a skitter until it dies (or we do)
   const b = bots[N - 1];
@@ -180,7 +184,8 @@ async function main() {
   b.send({ t: "attack", npc: skitter.id });
   let outcome = null;
   while (!outcome && Date.now() - tc < 150000) {
-    outcome = await b.wait((m) => m.t === "death", 5000);
+    // only our fight counts: a guard colonist may take down other creatures that jump us
+    outcome = await b.wait((m) => m.t === "death" && (m.who === `n:${skitter.id}` || m.who === `p:${b.id}`), 5000);
     if (!outcome && !b.events.some((e) => e.t === "hit")) b.send({ t: "attack", npc: skitter.id });
   }
   const hits = b.events.filter((e) => e.t === "hit");

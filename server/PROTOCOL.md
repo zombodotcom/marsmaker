@@ -13,7 +13,7 @@ will only ever be added to, never changed.
 |---|---|
 | `GET /health` | `ok` (text) |
 | `GET /room/<site_id>` with `Upgrade: websocket` | the room's WebSocket |
-| `GET /room/<site_id>/info` *(extra)* | `{"site","players","max","bounds"}` JSON, CORS `*` |
+| `GET /room/<site_id>/info` *(extra)* | `{"site","players","max","bounds","bots","ticking","tick"}` JSON, CORS `*`. `players` counts humans only. |
 
 `site_id` is the viewer's site name or live id. It must match `[A-Za-z0-9_-]{1,64}`; anything
 else gets `400`. One Durable Object (room) exists per site id. Any Origin is allowed.
@@ -78,7 +78,7 @@ Use the fabricator (node id 0); stand within 1 tile. Keeps making more while mat
         "skills":{"mining":0,"survey":0,"fabrication":0,"ranged":0,"defence":0,"hitpoints":1154},
         "inv":[{"item":"regolith","qty":1},null,...],      // always 28 entries
         "weapon":null,"hp":10,"max_hp":10,"combat":3},
- "players":[{"id","name","tx","tz"}],                    // others already online (not you)
+ "players":[{"id","name","tx","tz"}],                    // others already online (not you); colonists add "bot":true,"role" (extra)
  "nodes":[{"id","kind","tx","tz","up":true}],
  "npcs":[{"id","kind","tx","tz","hp","max","level","dead"}],
  "bounds":[...],"spawn":[tx,tz],"tick":1234,             // (extra)
@@ -103,7 +103,7 @@ Creature anim: `0` idle, `1` walk, `6` attack, `7` dead.
 Events:
 
 ```json
-{"t":"join","id","name","tx","tz"}
+{"t":"join","id","name","tx","tz"}                // colonists add "bot":true,"role":"guard" (extra)
 {"t":"leave","id"}
 {"t":"chat","id","name","msg"}
 {"t":"node","id","up":false}            // depleted / respawned
@@ -116,6 +116,7 @@ Events:
 {"t":"hit","src":"p:7","dst":"n:3","dmg":2}        // dmg 0 = miss; sent to everyone
 {"t":"death","who":"n:3"}                          // or "p:7"; sent to everyone
 {"t":"hp","hp":8,"max":10}                         // yours
+{"t":"heal","src":"p:4","dst":"p:7","amt":5}       // (extra) a medic colonist healed someone; sent to everyone
 {"t":"pong","n":1235}
 ```
 After a gather or craft the order is `msg`, `xp`, (`level`), `inv`.
@@ -205,6 +206,39 @@ can also `walk` first). Line of sight is not checked (the server has no terrain)
 
 **Player death:** you respawn at spawn with full hp and lose the equipped weapon. Hp regenerates
 1 per 10 ticks. A medkit restores 20 hp and delays your next shot by 2 ticks. There is no PvP.
+
+## Colonists *(extra)*
+
+Every room has a few server-run NPC colonists, so a site never feels empty and new players get
+help. To a client they are ordinary players: they appear in `welcome.players` and `join`, move in
+`tick` rows with the normal anims, chat with `chat`, and show up in `hit` / `death` / `heal` as
+`p:<id>`. Their player entries carry `"bot":true` and a `"role"`, which is useful for name tags
+such as "Vega (Guard)".
+
+| role | what it does |
+|---|---|
+| `quartermaster` | Stays by the fabricator. Gives each new character a one-time starter kit (3 bricks + 1 medkit) when they come within 4 tiles. The kit is tracked per token and survives restarts. |
+| `guard` | Patrols spawn and lookouts near the nearest rifts. Attacks any creature that jumps a player within 8 tiles. It leaves alone a creature the player is fighting on purpose, so it never steals a kill. |
+| `medic` | Walks to anyone below 50% hp within 40 tiles and heals +5 hp, at most once every 8 ticks per medic. |
+| `miner` / `surveyor` | Gathers near spawn, away from rifts. Miners craft at the fabricator. Both "store" their haul in the colony depot, which means it is simply cleared. |
+
+**Population:** about 4 colonists with one human, one fewer per extra human, and never fewer than 1.
+- The count is `clamp(5 - humans, 1, 4)`.
+- Roles go in this order: quartermaster, guard, medic, then a miner or a surveyor (fixed per site).
+- Names are stable per site.
+- Colonists leave with a `leave` and come back with a `join`.
+
+**Chat commands**, said in public chat:
+- **`help` / `follow me`:** the nearest free guard (or else the nearest free colonist) answers. It follows you for 2 minutes and fights anything that attacks you.
+- **`stop` / `bye` / `dismiss`:** sends your escort back to its post.
+- **Greetings:** colonists answer hi/hello now and then. They greet new players with a tip and drop the odd line of lore. They speak at most one line every 4 ticks per room.
+
+Colonists follow the same rules as players. They have levels for their role, use the same gather,
+craft and combat formulas, can be attacked, die, and respawn at spawn. They are never saved. The
+room still stops ticking and hibernates when the last *human* leaves.
+
+**Dev only:** with `MARSSCAPE_TEST=1` (`wrangler dev --var MARSSCAPE_TEST:1`), `{"t":"test","hp":n}`
+sets your own hp. In production that message is answered with "Unknown message type".
 
 ## Limits
 

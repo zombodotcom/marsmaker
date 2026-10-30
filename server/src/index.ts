@@ -9,9 +9,12 @@ import {
   cleanName, cleanChat, GatherKind, HP_START_XP, WEAPONS, LEGACY_ITEMS, combatLevel, hitChance, maxHit, NPC_DEFS, NpcDef,
   NPC_RESPAWN, AGGRO_RANGE, LEASH_RANGE, WANDER_RANGE, WorldNpc, generateRifts,
 } from "./game";
+import { BOT_WS, Colony } from "./bots";
 
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
+  /** "1" enables the `test` message (local `wrangler dev --var MARSSCAPE_TEST:1` only). */
+  MARSSCAPE_TEST?: string;
 }
 
 const PROTOCOL_VER = 1;
@@ -34,7 +37,7 @@ type Action =
   | { kind: "craft"; recipe: Recipe; timer: number }
   | { kind: "attack"; npc: number };
 
-interface Player {
+export interface Player {
   ws: WebSocket;
   id: number;
   token: string;
@@ -57,7 +60,7 @@ interface Player {
   nextEat: number;     // tick
 }
 
-interface Npc {
+export interface Npc {
   id: number;
   kind: WorldNpc["kind"];
   def: NpcDef;
@@ -135,6 +138,7 @@ export class Room extends DurableObject<Env> {
   nextId = 1;
   tickN = 0;
   timer: ReturnType<typeof setInterval> | null = null;
+  colony = new Colony(this); // server-side NPC colonists (bots.ts); never saved, never keep the room awake
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -188,7 +192,10 @@ export class Room extends DurableObject<Env> {
     const site = req.headers.get("X-Site") ?? "";
     if (!this.site && site) { this.site = site; this.setMeta("site", site); }
     if (new URL(req.url).pathname === "/info") {
-      return Response.json({ site: this.site, players: this.players.size, max: MAX_PLAYERS, bounds: this.bounds }, {
+      return Response.json({
+        site: this.site, players: this.players.size, max: MAX_PLAYERS, bounds: this.bounds,
+        bots: this.colony.list.length, ticking: !!this.timer, tick: this.tickN,
+      }, {
         headers: { "Access-Control-Allow-Origin": "*" },
       });
     }
@@ -203,7 +210,17 @@ export class Room extends DurableObject<Env> {
 
   // ---- socket plumbing ------------------------------------------------------
   send(ws: WebSocket, msg: object) {
+    if (ws === BOT_WS) return;
     try { ws.send(JSON.stringify(msg)); } catch { /* closed */ }
+  }
+
+  /** Humans and colonists: everyone who walks, fights and shows up in ticks. */
+  everyone(): Player[] {
+    return [...this.players.values(), ...this.colony.list];
+  }
+
+  present(p: Player): boolean {
+    return this.players.has(p.ws) || this.colony.has(p);
   }
 
   broadcast(msg: object, except?: WebSocket) {
@@ -228,6 +245,7 @@ export class Room extends DurableObject<Env> {
     for (const n of this.npcs) if (n.target === p) n.target = null;
     this.savePlayer(p);
     this.broadcast({ t: "leave", id: p.id });
+    this.colony.onLeave(p);
   }
 
   async webSocketClose(ws: WebSocket) {
@@ -272,6 +290,7 @@ export class Room extends DurableObject<Env> {
       case "equip": return this.onEquip(p, msg);
       case "unequip": return this.onUnequip(p);
       case "eat": return this.onEat(p, msg);
+      case "test": if (this.env.MARSSCAPE_TEST === "1") return this.onTest(p, msg); // else: unknown
       default: return this.send(ws, { t: "err", text: `Unknown message type "${String(msg.t).slice(0, 20)}".` });
     }
   }
@@ -359,11 +378,12 @@ export class Room extends DurableObject<Env> {
     p.sent = `${p.tx},${p.tz},${p.anim}`;
     this.savePlayer(p);
     ws.serializeAttachment({ token, id } satisfies Attachment);
+    this.colony.rebalance(this.players.size + 1); // so the welcome already lists this room's colonists
 
     this.send(ws, {
       t: "welcome", id, token, tick_ms: TICK_MS,
       you: { name: p.name, tx: p.tx, tz: p.tz, skills: p.skills, inv: p.inv, weapon: p.weapon, hp: p.hp, max_hp: hpLevel(p), combat: cbLevel(p) },
-      players: [...this.players.values()].map((o) => ({ id: o.id, name: o.name, tx: o.tx, tz: o.tz })),
+      players: this.everyone().map((o) => ({ id: o.id, name: o.name, tx: o.tx, tz: o.tz, ...this.colony.tag(o) })),
       nodes: this.nodes.map((n) => ({ id: n.id, kind: n.kind, tx: n.tx, tz: n.tz, up: !this.nodeUp.has(n.id) })),
       npcs: this.npcs.map((n) => this.npcRow(n)),
       // additive extras for the client
@@ -374,6 +394,7 @@ export class Room extends DurableObject<Env> {
     this.players.set(ws, p);
     this.broadcast({ t: "join", id, name: p.name, tx: p.tx, tz: p.tz }, ws);
     this.send(ws, { t: "msg", text: `Welcome to MarsScape, ${p.name}.` });
+    this.colony.onJoin(p);
     if (!this.timer) this.startLoop();
   }
 
@@ -445,6 +466,15 @@ export class Room extends DurableObject<Env> {
     if (!text) return;
     p.lastChat = now;
     this.broadcast({ t: "chat", id: p.id, name: p.name, msg: text });
+    this.colony.onChat(p, text);
+  }
+
+  /** Dev-only (MARSSCAPE_TEST=1): set your own hp, for testing the medic. */
+  onTest(p: Player, msg: any) {
+    if (Number.isInteger(msg.hp)) {
+      p.hp = Math.min(hpLevel(p), Math.max(1, msg.hp));
+      this.send(p.ws, { t: "hp", hp: p.hp, max: hpLevel(p) });
+    }
   }
 
   onAttack(p: Player, msg: any) {
@@ -562,9 +592,10 @@ export class Room extends DurableObject<Env> {
     p.dirty = true;
     this.send(p.ws, { t: "hp", hp: p.hp, max: p.hp });
     this.send(p.ws, { t: "msg", text: "You were overwhelmed. You wake up back at the landing site." });
+    this.colony.onDeath(p);
   }
 
-  tickNpc(n: Npc) {
+  tickNpc(n: Npc, all: Player[]) {
     if (n.respawnAt) {
       if (this.tickN >= n.respawnAt) {
         n.respawnAt = 0; n.hp = n.def.hp; [n.tx, n.tz] = n.home; n.anim = ANIM.idle; n.leash = false;
@@ -581,7 +612,7 @@ export class Room extends DurableObject<Env> {
     // aggression: nearest eligible player within range
     if (!n.target) {
       let best: Player | null = null, bd = AGGRO_RANGE + 1;
-      for (const p of this.players.values()) {
+      for (const p of all) {
         const d = dist(p.tx, p.tz, n.tx, n.tz);
         // single-way combat: only one creature picks on a given player at a time
         if (d < bd && cbLevel(p) < 2 * n.def.level && !this.npcs.some((o) => o.target === p)) { best = p; bd = d; }
@@ -590,7 +621,7 @@ export class Room extends DurableObject<Env> {
     }
     const t = n.target;
     if (t) {
-      if (!this.players.has(t.ws) || dist(n.tx, n.tz, n.home[0], n.home[1]) > LEASH_RANGE) {
+      if (!this.present(t) || dist(n.tx, n.tz, n.home[0], n.home[1]) > LEASH_RANGE) {
         n.target = null; n.leash = true; return;
       }
       if (dist(n.tx, n.tz, t.tx, t.tz) > n.def.range) {
@@ -696,7 +727,9 @@ export class Room extends DurableObject<Env> {
       }
     }
 
-    for (const p of [...this.players.values()]) {
+    this.colony.tick(now); // colonists decide before everyone moves
+    const all = this.everyone();
+    for (const p of all) {
       if (now - p.lastInput > IDLE_MS) { this.kick(p.ws, "You were logged out for being idle.", 1000); continue; }
       let anim: number = ANIM.idle;
       if (p.path.length) {
@@ -717,11 +750,11 @@ export class Room extends DurableObject<Env> {
         this.send(p.ws, { t: "hp", hp: p.hp, max: hpLevel(p) });
       }
     }
-    if (this.players.size) for (const n of this.npcs) this.tickNpc(n);
+    if (this.players.size) for (const n of this.npcs) this.tickNpc(n, all);
 
     const full = this.tickN % FULL_SYNC_TICKS === 0;
     const rows: [number, number, number, number][] = [];
-    for (const p of this.players.values()) {
+    for (const p of this.everyone()) {
       const key = `${p.tx},${p.tz},${p.anim}`;
       if (full || key !== p.sent) rows.push([p.id, p.tx, p.tz, p.anim]);
       p.sent = key;
