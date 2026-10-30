@@ -1,4 +1,4 @@
-// MarsScape server smoke test: bots connect, chat, walk, mine, craft, drop, fight imps,
+// MarsScape server smoke test: bots connect, chat, walk, mine, craft, drop, fight skitters,
 // and reconnect with their token to check persistence.
 //   node test/bots.mjs [ws://127.0.0.1:8787] [bots=3]
 // Needs Node 22+ (global WebSocket). Exits non-zero on failure.
@@ -109,7 +109,7 @@ async function main() {
   check(w.nodes.some((n) => n.kind === "fabricator" && n.id === 0), "fabricator node id 0 present");
   const kinds = new Set(w.nodes.map((n) => n.kind));
   check(["regolith", "ice", "hematite", "outcrop", "rift"].every((k) => kinds.has(k)), `all node kinds present (${w.nodes.length} nodes)`);
-  check(w.npcs.some((n) => n.kind === "imp"), `imps present (${w.npcs.length} demons)`);
+  check(w.npcs.some((n) => n.kind === "skitter"), `skitters present (${w.npcs.length} creatures)`);
 
   for (const b of bots.slice(1)) await b.connect();
   const join = await bots[0].wait((m) => m.t === "join" && m.id === bots[N - 1].id);
@@ -171,26 +171,26 @@ async function main() {
   await a.wait((m) => m.t === "inv", 3000);
   check(a.count("brick") === 0, "drop empties the slot");
 
-  // combat: punch an imp until it dies (or we do)
+  // combat: punch a skitter until it dies (or we do)
   const b = bots[N - 1];
-  const imp = [...b.npcs.values()].filter((n) => n.kind === "imp").sort((p, q) => cheb(0, 0, p.tx, p.tz) - cheb(0, 0, q.tx, q.tz))[0];
-  await b.walkNextTo(imp.tx, imp.tz);
+  const skitter = [...b.npcs.values()].filter((n) => n.kind === "skitter").sort((p, q) => cheb(0, 0, p.tx, p.tz) - cheb(0, 0, q.tx, q.tz))[0];
+  await b.walkNextTo(skitter.tx, skitter.tz);
   b.clearEvents();
   const tc = Date.now();
-  b.send({ t: "attack", npc: imp.id });
+  b.send({ t: "attack", npc: skitter.id });
   let outcome = null;
   while (!outcome && Date.now() - tc < 150000) {
     outcome = await b.wait((m) => m.t === "death", 5000);
-    if (!outcome && !b.events.some((e) => e.t === "hit")) b.send({ t: "attack", npc: imp.id });
+    if (!outcome && !b.events.some((e) => e.t === "hit")) b.send({ t: "attack", npc: skitter.id });
   }
   const hits = b.events.filter((e) => e.t === "hit");
   check(hits.some((h) => h.src === `p:${b.id}`), `player attacks land as hit events (${hits.length} hits)`);
-  check(hits.some((h) => h.src === `n:${imp.id}`) || outcome?.who === `n:${imp.id}`, "the imp fights back");
-  check(outcome?.who === `n:${imp.id}`, `imp killed in ${((Date.now() - tc) / 1000).toFixed(0)} s (outcome ${outcome?.who})`);
+  check(hits.some((h) => h.src === `n:${skitter.id}`) || outcome?.who === `n:${skitter.id}`, "the skitter fights back");
+  check(outcome?.who === `n:${skitter.id}`, `skitter killed in ${((Date.now() - tc) / 1000).toFixed(0)} s (outcome ${outcome?.who})`);
   await b.wait((m) => m.t === "msg" && /defeat/.test(m.text), 3000);
-  check(b.count("bones") >= 1, "imp drops bones");
+  check(b.count("chitin") >= 1, "skitter drops chitin");
   check(b.skills.ranged > 0 && b.skills.hitpoints > 1154, `combat xp (ranged ${b.skills.ranged}, hp ${b.skills.hitpoints})`);
-  const seen = await bots[0].wait((m) => m.t === "death" && m.who === `n:${imp.id}`, 2000);
+  const seen = await bots[0].wait((m) => m.t === "death" && m.who === `n:${skitter.id}`, 2000);
   check(!!seen, "other players see the kill");
 
   // persistence across reconnect

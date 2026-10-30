@@ -6,7 +6,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   TICK_MS, INV_SLOTS, MAX_XP, SKILLS, Skill, Slot, ITEMS, NODE_DEFS, RECIPES, Recipe, GATHER_TICKS, XP_TABLE,
   Bounds, WorldNode, levelForXp, gatherChance, generateNodes, clampBounds, clampToBounds, inBounds,
-  cleanName, cleanChat, GatherKind, HP_START_XP, WEAPONS, combatLevel, hitChance, maxHit, NPC_DEFS, NpcDef,
+  cleanName, cleanChat, GatherKind, HP_START_XP, WEAPONS, LEGACY_ITEMS, combatLevel, hitChance, maxHit, NPC_DEFS, NpcDef,
   NPC_RESPAWN, AGGRO_RANGE, LEASH_RANGE, WANDER_RANGE, WorldNpc, generateRifts,
 } from "./game";
 
@@ -289,7 +289,8 @@ export class Room extends DurableObject<Env> {
     try { inv = JSON.parse(r.inv); } catch { /* empty */ }
     inv = Array.from({ length: INV_SLOTS }, (_, i) => {
       const s = inv[i];
-      return s && typeof s.item === "string" && ITEMS[s.item] && s.qty > 0 ? { item: s.item, qty: Math.floor(s.qty) } : null;
+      const item = s && typeof s.item === "string" ? LEGACY_ITEMS[s.item] ?? s.item : "";
+      return s && ITEMS[item] && s.qty > 0 ? { item, qty: Math.floor(s.qty) } : null;
     });
     return this.fixHp({
       ws, id, token, name: name || r.name, tx: r.tx, tz: r.tz, skills, inv, path: [], run: false, action: null,
@@ -534,16 +535,16 @@ export class Room extends DurableObject<Env> {
     n.anim = ANIM.dead;
     this.broadcast({ t: "death", who: `n:${n.id}` });
     for (const o of this.players.values()) if (o.action?.kind === "attack" && o.action.npc === n.id) o.action = null;
-    const drops: string[] = ["bones"];
+    const drops: string[] = ["chitin"];
     const cores = n.def.core >= 1 ? n.def.core : Math.random() < n.def.core ? 1 : 0;
-    for (let i = 0; i < cores; i++) drops.push("demon_core");
+    for (let i = 0; i < cores; i++) drops.push("void_crystal");
     for (const [item, chance] of n.def.rare) if (Math.random() < chance) drops.push(item);
     const got: string[] = [];
     for (const d of drops) if (this.addItem(killer, d)) got.push(ITEMS[d].name);
     killer.dirty = true;
     this.send(killer.ws, { t: "inv", inv: killer.inv });
     const lost = got.length < drops.length ? " (some loot was lost: inventory full)" : "";
-    this.send(killer.ws, { t: "msg", text: `You defeat the ${n.kind.replace("_", " ")}. Loot: ${got.join(", ") || "nothing"}${lost}.` });
+    this.send(killer.ws, { t: "msg", text: `You defeat the ${n.def.name}. Loot: ${got.join(", ") || "nothing"}${lost}.` });
   }
 
   killPlayer(p: Player) {
@@ -582,7 +583,7 @@ export class Room extends DurableObject<Env> {
       let best: Player | null = null, bd = AGGRO_RANGE + 1;
       for (const p of this.players.values()) {
         const d = dist(p.tx, p.tz, n.tx, n.tz);
-        // single-way combat: only one demon picks on a given player at a time
+        // single-way combat: only one creature picks on a given player at a time
         if (d < bd && cbLevel(p) < 2 * n.def.level && !this.npcs.some((o) => o.target === p)) { best = p; bd = d; }
       }
       n.target = best;

@@ -69,13 +69,16 @@ export const ITEMS: Record<string, { name: string; stack: boolean }> = {
   water: { name: "Water flask", stack: false },
   iron_plate: { name: "Iron plate", stack: false },
   drill_bit: { name: "Drill bit", stack: false },
-  pistol: { name: "Pistol", stack: false },
-  rifle: { name: "Rifle", stack: false },
-  plasma_gun: { name: "Plasma gun", stack: false },
+  pistol: { name: "Blaster", stack: false },
+  rifle: { name: "Pulse Rifle", stack: false },
+  plasma_gun: { name: "Plasma Cannon", stack: false },
   medkit: { name: "Medkit", stack: false },
-  demon_core: { name: "Demon core", stack: true },
-  bones: { name: "Demon bones", stack: false },
+  void_crystal: { name: "Void Crystal", stack: true },
+  chitin: { name: "Xeno Chitin", stack: false },
 };
+
+/** Item ids from before the space re-skin; saved inventories are mapped on load. */
+export const LEGACY_ITEMS: Record<string, string> = { demon_core: "void_crystal", bones: "chitin" };
 
 export interface Recipe {
   id: string;
@@ -92,9 +95,9 @@ export const RECIPES: Recipe[] = [
   { id: "water", level: 10, xp: 22, inputs: { ice: 1 }, output: "water", ticks: 3, text: "You melt the ice into a flask of water." },
   { id: "iron_plate", level: 25, xp: 45, inputs: { hematite: 2 }, output: "iron_plate", ticks: 3, text: "You smelt the hematite into an iron plate." },
   { id: "medkit", level: 15, xp: 30, inputs: { water: 1, sample: 1 }, output: "medkit", ticks: 3, text: "You pack a medkit." },
-  { id: "pistol", level: 20, xp: 60, inputs: { iron_plate: 2 }, output: "pistol", ticks: 4, text: "You assemble a pistol." },
-  { id: "rifle", level: 40, xp: 140, inputs: { iron_plate: 4, drill_bit: 1 }, output: "rifle", ticks: 5, text: "You assemble a rifle." },
-  { id: "plasma_gun", level: 60, xp: 300, inputs: { iron_plate: 3, demon_core: 5 }, output: "plasma_gun", ticks: 6, text: "You bind the demon cores into a plasma gun. It hums." },
+  { id: "pistol", level: 20, xp: 60, inputs: { iron_plate: 2 }, output: "pistol", ticks: 4, text: "You assemble a blaster." },
+  { id: "rifle", level: 40, xp: 140, inputs: { iron_plate: 4, drill_bit: 1 }, output: "rifle", ticks: 5, text: "You assemble a pulse rifle." },
+  { id: "plasma_gun", level: 60, xp: 300, inputs: { iron_plate: 3, void_crystal: 5 }, output: "plasma_gun", ticks: 6, text: "You bind the void crystals into a plasma cannon. It hums." },
   { id: "drill_bit", level: 35, xp: 90, inputs: { sample: 1, iron_plate: 1 }, output: "drill_bit", ticks: 5, text: "You machine a drill bit. Mining feels easier with it." },
 ];
 
@@ -257,17 +260,23 @@ export function maxHit(level: number, strBonus: number): number {
   return Math.floor(0.5 + ((level + 8) * (strBonus + 64)) / 640);
 }
 
-export type NpcKind = "imp" | "hellhound" | "brute" | "rift_lord";
+/**
+ * Void creatures: ancient Martians sealed something beneath the planet, and the rifts are tearing
+ * open into the void. `skitter` Void Skitter, `stalker` Dust Stalker, `golem` Rift Golem,
+ * `leviathan` Void Leviathan (boss).
+ */
+export type NpcKind = "skitter" | "stalker" | "golem" | "leviathan";
 export interface NpcDef {
+  name: string;
   level: number; hp: number; att: number; def: number; maxHit: number; speed: number; range: number;
-  core: number;    // chance of a demon_core drop (>=1 means always, value = count)
+  core: number;    // chance of a void_crystal drop (>=1 means always, value = count)
   rare: [string, number][]; // [item, chance]
 }
 export const NPC_DEFS: Record<NpcKind, NpcDef> = {
-  imp: { level: 5, hp: 5, att: 1, def: 1, maxHit: 1, speed: 4, range: 1, core: 0.2, rare: [["pistol", 1 / 25]] },
-  hellhound: { level: 20, hp: 30, att: 18, def: 15, maxHit: 5, speed: 4, range: 1, core: 0.5, rare: [["pistol", 1 / 15], ["rifle", 1 / 80]] },
-  brute: { level: 45, hp: 70, att: 40, def: 38, maxHit: 10, speed: 6, range: 1, core: 1, rare: [["rifle", 1 / 30]] },
-  rift_lord: { level: 90, hp: 250, att: 85, def: 80, maxHit: 20, speed: 5, range: 4, core: 5, rare: [["plasma_gun", 1 / 4]] },
+  skitter: { name: "Void Skitter", level: 5, hp: 5, att: 1, def: 1, maxHit: 1, speed: 4, range: 1, core: 0.2, rare: [["pistol", 1 / 25]] },
+  stalker: { name: "Dust Stalker", level: 20, hp: 30, att: 18, def: 15, maxHit: 5, speed: 4, range: 1, core: 0.5, rare: [["pistol", 1 / 15], ["rifle", 1 / 80]] },
+  golem: { name: "Rift Golem", level: 45, hp: 70, att: 40, def: 38, maxHit: 10, speed: 6, range: 1, core: 1, rare: [["rifle", 1 / 30]] },
+  leviathan: { name: "Void Leviathan", level: 90, hp: 250, att: 85, def: 80, maxHit: 20, speed: 5, range: 4, core: 5, rare: [["plasma_gun", 1 / 4]] },
 };
 export const NPC_RESPAWN = 50;
 export const AGGRO_RANGE = 5;
@@ -277,8 +286,8 @@ export const WANDER_RANGE = 4;
 export interface WorldNpc { id: number; kind: NpcKind; home: [number, number] }
 
 /**
- * Place rifts (as extra nodes) and their demons. The rift nearest spawn hosts imps; rifts further
- * away host tougher demons; the farthest rift also hosts a single rift lord.
+ * Place rifts (as extra nodes) and their creatures. The rifts nearest spawn hold skitters; rifts
+ * further away hold tougher creatures; the farthest rift also holds a single leviathan.
  */
 export function generateRifts(siteId: string, bounds: Bounds, spawn: [number, number], nodes: WorldNode[]): WorldNpc[] {
   const rand = mulberry32(fnv1a("marsscape-rifts:" + siteId));
@@ -310,12 +319,12 @@ export function generateRifts(siteId: string, bounds: Bounds, spawn: [number, nu
   const npcs: WorldNpc[] = [];
   rifts.forEach((rf, i) => {
     const d = dist(rf);
-    const kind: NpcKind = i < 2 || d < 80 ? "imp" : d < 250 ? (rand() < 0.7 ? "hellhound" : "imp") : rand() < 0.6 ? "brute" : "hellhound";
-    const n = kind === "imp" ? 4 : kind === "hellhound" ? 3 : 2;
+    const kind: NpcKind = i < 2 || d < 80 ? "skitter" : d < 250 ? (rand() < 0.7 ? "stalker" : "skitter") : rand() < 0.6 ? "golem" : "stalker";
+    const n = kind === "skitter" ? 4 : kind === "stalker" ? 3 : 2;
     for (let k = 0; k < n; k++) {
       npcs.push({ id: npcs.length + 1, kind, home: clampToBounds(bounds, rf.tx + Math.round(rand() * 4 - 2), rf.tz + Math.round(rand() * 4 - 2)) });
     }
-    if (rf === far && rifts.length >= 3) npcs.push({ id: npcs.length + 1, kind: "rift_lord", home: [rf.tx, rf.tz] });
+    if (rf === far && rifts.length >= 3) npcs.push({ id: npcs.length + 1, kind: "leviathan", home: [rf.tx, rf.tz] });
   });
   return npcs;
 }

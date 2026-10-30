@@ -3,7 +3,7 @@
 MarsScape is the old-school-MMO mode of MarsMaker. It has:
 - 600 ms ticks and tile movement;
 - six skills: mining, survey, fabrication, ranged, defence and hitpoints;
-- a 28-slot inventory, public chat, and demons to shoot;
+- a 28-slot inventory, public chat, and void creatures from the rifts to shoot;
 - real HiRISE terrain, with one shared world per Mars site.
 
 This folder is the server: a Cloudflare Worker with one Durable Object ("room") per site. Player
@@ -11,8 +11,8 @@ progress is stored in the room's SQLite storage. Everything runs on the Cloudfla
 The wire protocol is in [PROTOCOL.md](PROTOCOL.md).
 
 - `src/index.ts`: Worker routing plus the `Room` Durable Object (tick loop, validation, persistence).
-- `src/game.ts`: game rules (XP curve, nodes, recipes, weapons, demons, world generation).
-- `test/bots.mjs`: bot test. Bots chat, walk, mine, craft, drop, fight an imp, and reconnect.
+- `src/game.ts`: game rules (XP curve, nodes, recipes, weapons, creatures, world generation).
+- `test/bots.mjs`: bot test. Bots chat, walk, mine, craft, drop, fight a skitter, and reconnect.
 
 ## Run locally
 

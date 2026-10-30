@@ -64,7 +64,7 @@ Use the fabricator (node id 0); stand within 1 tile. Keeps making more while mat
 {"t":"drop","slot":n}        // 0..27, destroys the item (no ground items yet)
 {"t":"chat","msg":"..."}     // ≤80 chars after cleaning, 1 per second
 {"t":"ping"}                 // → {"t":"pong","n":tick}
-{"t":"attack","npc":id}      // fight a demon (see Combat)
+{"t":"attack","npc":id}      // fight a void creature (see Combat)
 {"t":"equip","slot":n}       // wield the weapon in that slot (swaps with the current one)
 {"t":"unequip"}              // put the weapon back in the inventory
 {"t":"eat","slot":n}         // use a medkit: +20 hp
@@ -93,12 +93,12 @@ Skill values are XP, not levels. Levels: use `xp_table` or the formula below.
 ```json
 {"t":"tick","n":1235,"p":[[id,tx,tz,anim],...],"m":[[id,tx,tz,anim,hp],...],"full":true}
 ```
-Sent every tick, even when nothing moved. `p` are players and `m` are demons whose tile, anim (or
+Sent every tick, even when nothing moved. `p` are players and `m` are creatures whose tile, anim (or
 hp) changed since the last tick. Every 10th tick has `"full":true` *(extra)* and lists everyone.
 The `p` list includes you.
 
 Player anim: `0` idle, `1` walk, `2` run, `3` mine, `4` survey, `5` craft, `6` attack *(extra)*.
-Demon anim: `0` idle, `1` walk, `6` attack, `7` dead.
+Creature anim: `0` idle, `1` walk, `6` attack, `7` dead.
 
 Events:
 
@@ -143,7 +143,7 @@ each gather kind). Rifts are extra: 3–40, two of them 25–40 tiles from spawn
 | `hematite` | mining | 30 | 65 | `hematite` | 45 |
 | `outcrop` | survey | 1 | 25 | `sample` | 25 |
 | `fabricator` | — | — | — | crafting station, id 0, never depletes | — |
-| `rift` | — | — | — | where demons live, never depletes | — |
+| `rift` | — | — | — | a tear into the void where creatures come from, never depletes | — |
 
 Success per attempt: `0.3 + 0.015 * (level - req)`, +0.15 for mining with a `drill_bit` in the
 inventory, clamped to 0.05–0.95.
@@ -159,13 +159,18 @@ inventory, clamped to 0.05–0.95.
 | `iron_plate` | 25 | 2 hematite | 45 |
 | `drill_bit` | 35 | 1 sample + 1 iron_plate | 90 |
 | `rifle` | 40 | 4 iron_plate + 1 drill_bit | 140 |
-| `plasma_gun` | 60 | 3 iron_plate + 5 demon_core | 300 |
+| `plasma_gun` | 60 | 3 iron_plate + 5 void_crystal | 300 |
 
 Items: `regolith`, `ice`, `hematite`, `sample`, `brick`, `water`, `iron_plate`, `drill_bit`,
-`pistol`, `rifle`, `plasma_gun`, `medkit`, `bones`, `demon_core` (stacks). Everything else takes
+`pistol` (Blaster), `rifle` (Pulse Rifle), `plasma_gun` (Plasma Cannon), `medkit`, `chitin` (Xeno Chitin),
+`void_crystal` (Void Crystal, stacks). Everything else takes
 one slot per item.
 
 ## Combat
+
+Lore: ancient Martians sealed something beneath the planet; the rifts are tearing open into the
+void and space creatures pour out. Item ids `demon_core` / `bones` from before this re-skin are
+read as `void_crystal` / `chitin` when a saved player loads.
 
 | weapon | ranged level to equip | attack every (ticks) | range (tiles) |
 |---|---|---|---|
@@ -177,26 +182,26 @@ one slot per item.
 `attack` sets your target. If it is out of range the server steps you toward it each tick (you
 can also `walk` first). Line of sight is not checked (the server has no terrain).
 
-- Your accuracy roll is `(ranged + 8) * (weapon acc + 64)`. The demon's defence roll is `(def + 9) * 64`.
+- Your accuracy roll is `(ranged + 8) * (weapon acc + 64)`. The creature's defence roll is `(def + 9) * 64`.
 - Hit chance is `A > D ? 1 - (D+2)/(2(A+1)) : A/(2(D+1))`.
 - Max hit is `floor(0.5 + (ranged + 8) * (weapon str + 64) / 640)`. Damage is uniform from 0 to the max hit.
 - XP per damage dealt: ranged ×4, hitpoints ×1.33, and defence ×1 *(extra, so defence trains)*.
 
-| demon | level | hp | max hit | attacks every | drops |
+| creature | level | hp | max hit | attacks every | drops |
 |---|---|---|---|---|---|
-| `imp` | 5 | 5 | 1 | 4 | bones, core 20%, pistol 1/25 |
-| `hellhound` | 20 | 30 | 5 | 4 | bones, core 50%, pistol 1/15, rifle 1/80 |
-| `brute` | 45 | 70 | 10 | 6 | bones, 1 core, rifle 1/30 |
-| `rift_lord` | 90 | 250 | 20 (range 4) | 5 | bones, 5 cores, plasma gun 1/4 |
+| `skitter` (Void Skitter) | 5 | 5 | 1 | 4 | chitin, crystal 20%, blaster 1/25 |
+| `stalker` (Dust Stalker) | 20 | 30 | 5 | 4 | chitin, crystal 50%, blaster 1/15, pulse rifle 1/80 |
+| `golem` (Rift Golem) | 45 | 70 | 10 | 6 | chitin, 1 crystal, pulse rifle 1/30 |
+| `leviathan` (Void Leviathan, boss) | 90 | 250 | 20 (range 4) | 5 | chitin, 5 crystals, plasma cannon 1/4 |
 
-**Demon AI:**
-- **Placement:** demons live at rifts. The two rifts near spawn hold imps, and the farthest rift also holds one rift lord.
-- **Wandering:** an idle demon wanders within 4 tiles of home.
-- **Aggression:** a demon attacks the nearest player within 5 tiles whose combat level is below 2× its own.
-  - Combat is single-way: only one demon goes after a given player at a time.
-  - A demon you attack fights back, unless it is already fighting someone else.
-- **Chasing:** a demon chases up to 15 tiles from home, then walks back and heals.
-- **Death and loot:** a dead demon respawns after 50 ticks. Its loot goes straight into the killer's inventory, and anything that doesn't fit is lost.
+**Creature AI:**
+- **Placement:** creatures live at rifts. The two rifts near spawn hold skitters, and the farthest rift also holds one leviathan.
+- **Wandering:** an idle creature wanders within 4 tiles of home.
+- **Aggression:** a creature attacks the nearest player within 5 tiles whose combat level is below 2× its own.
+  - Combat is single-way: only one creature goes after a given player at a time.
+  - A creature you attack fights back, unless it is already fighting someone else.
+- **Chasing:** a creature chases up to 15 tiles from home, then walks back and heals.
+- **Death and loot:** a dead creature respawns after 50 ticks. Its loot goes straight into the killer's inventory, and anything that doesn't fit is lost.
 
 **Player death:** you respawn at spawn with full hp and lose the equipped weapon. Hp regenerates
 1 per 10 ticks. A medkit restores 20 hp and delays your next shot by 2 ticks. There is no PvP.
