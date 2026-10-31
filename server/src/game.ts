@@ -32,7 +32,7 @@ export function levelForXp(xp: number): number {
 // ---- Resource nodes ---------------------------------------------------------
 export type NodeKind =
   | "regolith" | "ice" | "hematite" | "outcrop" | "void_vein" | "fossil"
-  | "fabricator" | "rift" | "pit" | "ladder" | "locker";
+  | "fabricator" | "rift" | "pit" | "ladder" | "locker" | "stall";
 
 export interface NodeDef {
   skill: Skill;
@@ -44,7 +44,7 @@ export interface NodeDef {
   verb: string;      // "You mine some regolith."
 }
 
-export type GatherKind = Exclude<NodeKind, "fabricator" | "rift" | "pit" | "ladder" | "locker">;
+export type GatherKind = Exclude<NodeKind, "fabricator" | "rift" | "pit" | "ladder" | "locker" | "stall">;
 export const NODE_DEFS: Record<GatherKind, NodeDef> = {
   regolith: { skill: "mining", level: 1, xp: 18, item: "regolith", deplete: 1 / 8, respawn: 8, verb: "You scoop up some regolith." },
   ice: { skill: "mining", level: 15, xp: 35, item: "ice", deplete: 1 / 5, respawn: 20, verb: "You chip off a chunk of buried ice." },
@@ -91,7 +91,48 @@ export const ITEMS: Record<string, { name: string; stack: boolean }> = {
   relic_suit: { name: "Relic Armour", stack: false },
   rift_blade: { name: "Rift Blade", stack: false },
   void_cape: { name: "Void Cape", stack: false },
+  credits: { name: "Credits", stack: true },
 };
+
+// ---- Trader prices ----------------------------------------------------------
+/**
+ * Base value of each item in credits. The trader buys from you below value and sells above it:
+ * the best sell price (0.6x, stock empty) is always below the cheapest buy price (1.0x, stock
+ * overflowing), so buying and selling back can never make a profit at any stock level.
+ */
+export const VALUE: Record<string, number> = {
+  regolith: 2, ice: 6, hematite: 12, sample: 8, brick: 6, water: 14, iron_plate: 30, drill_bit: 80,
+  pistol: 120, rifle: 400, plasma_gun: 1500, medkit: 40, void_crystal: 60, chitin: 10, ancient_relic: 250,
+  xp_lamp: 2000, chitin_helmet: 45, chitin_suit: 70, iron_helmet: 110, iron_suit: 220, void_shield: 600,
+  relic_helmet: 900, relic_suit: 1400,
+};
+/** Rift Surge trophies are bound to whoever earned them; credits are the currency itself. */
+export const UNSELLABLE = new Set(["rift_blade", "void_cape", "credits"]);
+/** What the trader normally keeps on the shelf: item -> normal stock. Anything else she buys drifts away. */
+export const SHOP_STOCK: [string, number][] = [
+  ["medkit", 10], ["water", 15], ["brick", 25], ["iron_plate", 10], ["chitin_helmet", 3], ["pistol", 3], ["xp_lamp", 2],
+];
+export const SHOP_NORMAL: Record<string, number> = Object.fromEntries(SHOP_STOCK);
+export const SHOP_MAX = 500;        // per item on the shelf
+export const RESTOCK_TICKS = 50;    // every 30 s each shelf moves one step back toward normal
+
+/** Price to buy one unit when the shelf holds `qty` (qty >= 1). 1.0x value at 2x normal stock, up to 1.6x when nearly empty. */
+export function buyPrice(item: string, qty: number): number {
+  const v = VALUE[item] ?? 0, n = SHOP_NORMAL[item] ?? 0;
+  const f = n > 0 ? Math.min(1, Math.max(0, qty / (2 * n))) : 0.5; // 0 = scarce, 1 = overflowing
+  return Math.max(1, Math.ceil(v * (1.6 - 0.6 * f)));
+}
+
+/** Credits for selling one unit when the shelf holds `qty`. 0.6x value when the trader has none, down to 0.3x when overflowing. */
+export function sellPrice(item: string, qty: number): number {
+  if (UNSELLABLE.has(item)) return 0;
+  const v = VALUE[item] ?? 0, n = SHOP_NORMAL[item] ?? 0;
+  const f = n > 0 ? Math.min(1, Math.max(0, qty / (2 * n))) : Math.min(1, qty / 10);
+  return Math.floor(v * (0.6 - 0.3 * f));
+}
+
+/** Credits dropped by a creature: roughly its level, randomised. */
+export const creditDrop = (level: number) => Math.max(1, Math.floor(level * (0.5 + Math.random())));
 
 /** Item ids from before the space re-skin; saved inventories are mapped on load. */
 export const LEGACY_ITEMS: Record<string, string> = { demon_core: "void_crystal", bones: "chitin" };
@@ -414,4 +455,13 @@ export function placeExtras(siteId: string, bounds: Bounds, spawn: [number, numb
     add("pit", tx, tz);
     break;
   }
+  // the trader's stall, on the far side of the fabricator from the locker
+  const lk = nodes.find((n) => n.kind === "locker");
+  const sx = lk ? Math.sign(fab.tx - lk.tx) : 1, sz = lk ? Math.sign(fab.tz - lk.tz) : 0;
+  const stallAt = [[sx * 3, sz * 3], [3, 0], [0, 3], [-3, 0], [0, -3], [3, 3], [-3, 3], [3, -3], [-3, -3], [4, 0], [0, 4]]
+    .map(([dx, dz]) => [fab.tx + dx, fab.tz + dz]).find(([x, z]) => free(x, z) && free(x, z + 1));
+  if (stallAt) add("stall", stallAt[0], stallAt[1]);
 }
+
+/** The tile where the trader stands: just south (+z) of her stall. */
+export const traderPost = (stall: WorldNode): [number, number] => [stall.tx, stall.tz + 1];

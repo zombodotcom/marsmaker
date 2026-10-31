@@ -78,7 +78,7 @@ class Client {
     return cond();
   }
 
-  bots() { return [...this.roster.values()].filter((p) => p.bot); }
+  bots() { return [...this.roster.values()].filter((p) => p.bot && p.role !== "trader"); } // the trader is extra, never scaled
   botChat(re) { return (m) => m.t === "chat" && this.roster.get(m.id)?.bot && re.test(m.msg); }
   count(item) { return this.inv.reduce((a, s) => a + (s && s.item === item ? s.qty : 0), 0); }
 
@@ -100,7 +100,8 @@ async function main() {
   // ---- one human: four colonists, greeting, tip, starter kit ----------------------------
   const a = new Client("Ada");
   await a.connect();
-  const cols = a.welcome.players.filter((p) => p.bot);
+  const cols = a.welcome.players.filter((p) => p.bot && p.role !== "trader");
+  check(a.welcome.players.some((p) => p.bot && p.role === "trader"), "the trader is there too, on top of the crew");
   const roles = cols.map((p) => p.role).sort();
   check(cols.length === 4, `welcome lists 4 colonists for 1 human (${cols.map((p) => `${p.name}:${p.role}`).join(", ")})`);
   check(["quartermaster", "guard", "medic"].every((r) => roles.includes(r)) && roles.some((r) => r === "miner" || r === "surveyor"),
@@ -177,7 +178,7 @@ async function main() {
     const c = new Client(`Extra ${i + 1}`);
     await c.connect();
     more.push(c);
-    const n = c.welcome.players.filter((p) => p.bot).length;
+    const n = c.welcome.players.filter((p) => p.bot && p.role !== "trader").length;
     check(n === want, `${2 + i} humans -> ${want} colonist${want > 1 ? "s" : ""} (welcome lists ${n})`);
   }
   await sleep(1000);
@@ -185,7 +186,7 @@ async function main() {
   for (const c of more) c.close();
   const refilled = await a2.until(() => a2.bots().length === 4, 15000);
   check(refilled, `colonists come back when the extra humans leave (${a2.bots().length})`);
-  const rejoin = a2.events.filter((m) => m.t === "join" && m.bot);
+  const rejoin = a2.events.filter((m) => m.t === "join" && m.bot && m.role !== "trader");
   check(rejoin.length >= 3 && rejoin.every((m) => m.role), "colonist joins carry bot:true and a role");
 
   // ---- the room stops ticking when the last human leaves ------------------------------------

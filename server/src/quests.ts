@@ -29,7 +29,7 @@ export const QUESTS: QuestDef[] = [
     steps: [{ kind: "kill", target: "skitter", n: 5, text: "Kill 5 Void Skitters" }],
     offer: "Skitters keep crawling out of the near rifts. Thin them out: five should do it.",
     thanks: "Nice shooting. The perimeter's quieter already.",
-    reward: { items: [["medkit", 1]], lamps: 1 }, rewardText: "1 Insight Lamp, 1 medkit",
+    reward: { items: [["medkit", 1], ["credits", 60]], lamps: 1 }, rewardText: "1 Insight Lamp, 1 medkit, 60 credits",
   },
   {
     id: "brick_drive", name: "Building Blocks", giver: "quartermaster", qp: 1,
@@ -64,14 +64,14 @@ export const QUESTS: QuestDef[] = [
     steps: [{ kind: "kill", target: "stalker", n: 3, text: "Kill 3 Dust Stalkers" }],
     offer: "Dust Stalkers are circling the colony. Put three of them down.",
     thanks: "That's three fewer pairs of eyes in the dust. Here, chitin armour from the last batch.",
-    reward: { items: [["chitin_suit", 1]], lamps: 2 }, rewardText: "2 Insight Lamps, a chitin suit",
+    reward: { items: [["chitin_suit", 1], ["credits", 200]], lamps: 2 }, rewardText: "2 Insight Lamps, a chitin suit, 200 credits",
   },
   {
     id: "heavy_metal", name: "Heavy Metal", giver: "guard", qp: 2, req: { ranged: 35 },
     steps: [{ kind: "kill", target: "golem", n: 1, text: "Destroy a Rift Golem" }],
     offer: "A Rift Golem is pulling itself together out past the far rifts. Break it before it finishes.",
     thanks: "You actually did it. Take the crystals: it won't be needing them.",
-    reward: { items: [["void_crystal", 5]], lamps: 2 }, rewardText: "2 Insight Lamps, 5 void crystals",
+    reward: { items: [["void_crystal", 5], ["credits", 400]], lamps: 2 }, rewardText: "2 Insight Lamps, 5 void crystals, 400 credits",
   },
   {
     id: "echoes", name: "Echoes Below", giver: "quartermaster", qp: 3, req: { survey: 40 },
@@ -217,16 +217,21 @@ export function choose(room: Room, p: Player, option: string) {
   if (option === "turn_in") {
     if (!ready(room, p, q)) return room.send(p.ws, { t: "msg", text: "You don't have everything yet." });
     const items: string[] = [];
-    for (const [item, n] of q.reward.items) for (let i = 0; i < n; i++) items.push(item);
+    const stacks: [string, number][] = [];
+    for (const [item, n] of q.reward.items) {
+      if (ITEMS[item]?.stack) stacks.push([item, n]);
+      else for (let i = 0; i < n; i++) items.push(item);
+    }
     for (let i = 0; i < q.reward.lamps; i++) items.push("xp_lamp");
     const step = q.steps[q.steps.length - 1];
     const freed = step.kind === "deliver" && !ITEMS[step.target]?.stack ? step.n : 0;
-    const need = items.filter((i) => !ITEMS[i].stack).length + (items.some((i) => ITEMS[i].stack) ? 1 : 0);
+    const need = items.length + stacks.filter(([i]) => !room.countItem(p, i)).length;
     if (p.inv.filter((s) => s === null).length + freed < need) {
       return room.send(p.ws, { t: "msg", text: "Make some room in your pack first." });
     }
     if (step.kind === "deliver") room.removeItem(p, step.target, step.n);
     for (const i of items) room.addItem(p, i);
+    for (const [i, n] of stacks) room.addItems(p, i, n);
     p.quests[q.id] = { s: "done", step: q.steps.length - 1, p: step.n };
     p.dirty = true;
     room.send(p.ws, { t: "inv", inv: p.inv });

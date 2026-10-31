@@ -92,10 +92,17 @@ Use the fabricator (node id 0); stand within 1 tile. Keeps making more while mat
 {"t":"talk","id":playerId}                   // a colonist; you walk over first
 {"t":"dialog_choose","option":"accept"}      // an option id from the last dialog
 {"t":"rub","slot":n,"skill":"mining"}        // use an Insight Lamp on a skill
+{"t":"shop_open","id":traderId}              // the trader colonist (id optional); you walk over first
+{"t":"shop_buy","idx":n,"qty":k}             // idx into the shop's stock list; qty a positive integer or "all"
+{"t":"shop_sell","slot":n,"qty":k}           // from an inventory slot; qty a positive integer or "all"
+{"t":"shop_buyback","idx":n}                 // idx into your buyback list
+{"t":"shop_close"}
+{"t":"value","item":"medkit"}                // what the trader charges / pays for one, right now
 ```
 
 Rate limits on top of the general one *(extra)*: `talk` once per 400 ms, `rub` once per 300 ms,
-bank actions once per 100 ms and `trade_request` once per 500 ms. A message over its limit is
+bank actions once per 100 ms, `trade_request` once per 500 ms, `shop_open` once per 300 ms,
+shop buy/sell/buyback once per 100 ms and `value` once per 100 ms. A message over its limit is
 refused with `{"t":"err","text":"Slow down."}`.
 
 **While you are trading**, anything that takes items out of your inventory is refused with
@@ -176,6 +183,9 @@ Events:
 {"t":"event","kind":"surge","phase":"warning"|"open"|"boss"|"ended","tx","tz","ends_in":200}
 {"t":"npc_spawn","npc":{"id","kind","tx","tz","hp","max","level","dead"}}   // a creature that wasn't in welcome
 {"t":"npc_despawn","id":100004}
+{"t":"shop","npc":id,"name":"Juno","stock":[{"item","qty","price","sell"}],"buyback":[{"item","qty","price","expires_in"}],"sell":{"<item>":price},"credits":n}
+{"t":"shop_end","reason":"..."}
+{"t":"value","item":"medkit","buy":64|null,"sell":24|null}
 ```
 The weapon-only `equip` event is still sent on every weapon change, for older clients.
 After a gather or craft the order is `msg`, `xp`, (`level`), `inv`.
@@ -297,9 +307,10 @@ such as "Vega (Guard)".
 
 | role | what it does |
 |---|---|
-| `quartermaster` | Stays by the fabricator. Gives each new character a one-time starter kit (3 bricks + 1 medkit) when they come within 4 tiles. The kit is tracked per token and survives restarts. |
+| `quartermaster` | Stays by the fabricator. Gives each new character a one-time starter kit (3 bricks + 1 medkit + 100 credits) when they come within 4 tiles. The kit is tracked per token and survives restarts. |
 | `guard` | Patrols spawn and lookouts near the nearest rifts. Attacks any creature that jumps a player within 8 tiles. It leaves alone a creature the player is fighting on purpose, so it never steals a kill. |
 | `medic` | Walks to anyone below 50% hp within 40 tiles and heals +5 hp, at most once every 8 ticks per medic. |
+| `trader` | Minds the stall next to the fabricator and runs the shop (see Trader and credits). Always present, not counted in the population below. |
 | `miner` / `surveyor` | Gathers near spawn, away from rifts. Miners craft at the fabricator. Both "store" their haul in the colony depot, which means it is simply cleared. |
 
 **Population:** about 4 colonists with one human, one fewer per extra human, and never fewer than 1.
@@ -319,7 +330,7 @@ room still stops ticking and hibernates when the last *human* leaves.
 
 **Dev only:** with `MARSSCAPE_TEST=1` (`wrangler dev --var MARSSCAPE_TEST:1`), `{"t":"test",...}`
 accepts `hp` (set your hp), `skills` (`{"ranged":xp,...}`), `give` (a list of item ids),
-`surge` (`"now"` starts a 3-tick warning, `"boss"` brings the boss next to you) and
+`credits` (a number: adds that many credits), `surge` (`"now"` starts a 3-tick warning, `"boss"` brings the boss next to you) and
 `defsim` + `n` (samples a creature kind's hit rate against you; answered with
 `{"t":"test","hit_rate","bonus"}`). In production that message is answered with "Unknown message type".
 
@@ -356,6 +367,60 @@ with `err` "You can't walk there.". Creatures follow the same rule. Line of sigh
 **Content.** About 12 `void_vein` (mining 45 → void crystals) and 8 `fossil` (survey 40 → ancient
 relics) in the far chambers; 14 `glowworm` along the tubes and a few `crystal_horror` in the far
 chambers.
+
+## Trader and credits *(extra)*
+
+**Credits** (`credits`) are an ordinary stackable item: they sit in your pack, stack in the locker and
+can be traded. You get them from:
+- the quartermaster's starter kit (+100 credits, new characters only);
+- every creature kill: about its level, randomised (`floor(level * (0.5..1.5))`, at least 1);
+- some quests (Pest Control 60, Dust to Dust 200, Heavy Metal 400);
+- selling to the trader.
+
+**The trader** is a colonist with `"role":"trader"`. She is present in every surface room (on top of
+the usual crew, so she is never scaled away) and stands one tile south (+z) of the `stall` node,
+which sits 3 tiles from the fabricator on the side away from the locker. `act` on the stall or
+`shop_open` both walk you to within 2 tiles of her and open the shop. She never trades with
+`trade_request`, never escorts, and only fights back if attacked.
+
+**Opening:** you get `shop`:
+- `stock`: the shelf, shared by everyone in the room. `price` is what one unit costs right now
+  (0 when sold out), `sell` what she'd pay for one.
+- `buyback`: your own recent sales (newest first, at most 10). `price` is the total you were paid,
+  which is exactly what buying it back costs. `expires_in` in seconds.
+- `sell`: what she'd pay for one of each item in your pack right now (0 = she won't take it).
+- `credits`: how many credits you carry.
+
+`shop` is sent again after each of your transactions, when anyone else changes the shelf while your
+window is open, and on every restock. `shop_end` closes the window: you walked more than 2 tiles
+away, started a trade, or sent `shop_close`.
+
+**Prices.** Every item has a base value (`VALUE` in game.ts). With `n` = the item's normal stock and
+`q` = the units on the shelf, `f = clamp(q / 2n, 0, 1)`:
+- buy one: `ceil(value * (1.6 - 0.6 f))`: 1.6x when nearly sold out, 1.0x when the shelf is overflowing;
+- sell one: `floor(value * (0.6 - 0.3 f))`: 0.6x when she has none, 0.3x when overflowing.
+  For an item she doesn't normally stock, `f = min(1, q / 10)`.
+
+Because the best sell price (0.6x) is below the lowest buy price (1.0x), buying and selling back can
+never make a profit. Multi-unit buys and sells are priced one unit at a time, so a big sale slowly
+lowers its own price. `shop_buy` buys as many as you can afford and fit.
+
+**Normal stock:** medkit 10, water flask 15, regolith brick 25, iron plate 10, chitin helmet 3,
+blaster 3, Insight Lamp 2. Everything you sell joins the shelf (at most 500 of an item). Every
+30 s (50 ticks) each shelf moves one unit back toward its normal stock, so items she doesn't
+normally stock dwindle and vanish.
+
+**Won't buy:** the Rift Surge trophies (`rift_blade`, `void_cape`, bound to whoever earned them)
+and credits themselves.
+
+**Buyback.** Each sale adds one entry. Buying it back costs exactly what you were paid and takes
+those goods back off the shelf (as many as are still there). The list is per character and per
+session: it is cleared when you log out or leave the room (e.g. climbing into the lava tube), and
+entries expire after 30 minutes.
+
+**Rules.** All checks happen on the server: you must be within 2 tiles of the trader, not trading,
+with enough credits and inventory space. Each transaction is computed on a copy and committed in
+one step together with your save, so nothing is duplicated or lost.
 
 ## Colony locker (bank) *(extra)*
 

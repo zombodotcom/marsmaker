@@ -6,13 +6,13 @@
 import type { Npc, Player, Room } from "./index";
 import {
   GatherKind, INV_SLOTS, ITEMS, NODE_DEFS, NPC_DEFS, RECIPES, Recipe, SKILLS, Skill, WEAPONS, WorldNode, XP_TABLE,
-  clampToBounds, emptyGear, fnv1a, levelForXp,
+  clampToBounds, emptyGear, fnv1a, levelForXp, traderPost,
 } from "./game";
 
 /** One shared stand-in socket for every colonist. Room.send() skips it, so bots cost no JSON. */
 export const BOT_WS = { send() {}, close() {} } as unknown as WebSocket;
 
-export type Role = "quartermaster" | "guard" | "medic" | "miner" | "surveyor";
+export type Role = "quartermaster" | "guard" | "medic" | "miner" | "surveyor" | "trader";
 
 interface RoleDef { levels: Partial<Record<Skill, number>>; weapon: string | null }
 const ROLES: Record<Role, RoleDef> = {
@@ -21,6 +21,7 @@ const ROLES: Record<Role, RoleDef> = {
   medic: { levels: { hitpoints: 30, defence: 25, ranged: 20 }, weapon: "pistol" },
   miner: { levels: { mining: 35, fabrication: 30, hitpoints: 15, defence: 10 }, weapon: null },
   surveyor: { levels: { survey: 35, hitpoints: 15, defence: 10 }, weapon: null },
+  trader: { levels: { hitpoints: 30, defence: 30, ranged: 25 }, weapon: "pistol" },
 };
 
 const NAMES = ["Vega", "Orion", "Nova", "Lyra", "Juno", "Atlas", "Rhea", "Mira", "Echo", "Sol", "Wren", "Flint", "Cinder", "Haze", "Pike", "Rook"];
@@ -32,6 +33,7 @@ const GUARD_RANGE = 8;         // guards defend players within this many tiles
 const WORK_RADIUS = 45;        // gatherers stay this close to spawn
 const RIFT_CLEARANCE = 12;     // ...and this far from rifts
 const KIT = ["brick", "brick", "brick", "medkit"];
+const KIT_CREDITS = 100;
 const SAY_GAP = 4;             // ticks between two colonist chat lines in a room
 
 const cheb = (ax: number, az: number, bx: number, bz: number) => Math.max(Math.abs(ax - bx), Math.abs(az - bz));
@@ -59,6 +61,7 @@ const TIPS = [
   () => "Tip: two regolith at the fabricator make a brick. Easy fabrication xp.",
   () => "Tip: say 'help' in chat and one of us will cover you for two minutes.",
   () => "Tip: a medkit heals 20. Water plus a core sample makes one.",
+  () => "Tip: the trader by the fabricator buys almost anything. Creatures drop credits too.",
   () => `Tip: ${weakest()}s swarm near the rifts. Bring a blaster if you can.`,
   () => "Tip: survey the pale outcrops for core samples. Medkits need them.",
 ];
@@ -127,6 +130,11 @@ export class Colony {
     return c ? { p: c.p, role: c.role } : null;
   }
 
+  /** The trader minding the stall, if there is one. */
+  trader(): Player | null {
+    return this.cs.find((c) => c.role === "trader")?.p ?? null;
+  }
+
   /** Roles present in the room right now (quests fall back to the quartermaster). */
   roles(): Set<Role> {
     return new Set(this.cs.map((c) => c.role));
@@ -135,15 +143,18 @@ export class Colony {
   /** About 4 colonists with one human, one fewer per extra human, never below 1. */
   rebalance(humans: number) {
     if (!this.room.bounds || humans <= 0 || this.room.cave) return; // nobody lives in the lava tube
+    // the trader always minds her stall, on top of the rest of the crew
+    if (!this.cs.some((c) => c.role === "trader") && this.room.nodes.some((n) => n.kind === "stall")) this.spawn("trader");
     const want = Math.min(4, Math.max(1, 5 - humans));
     const order = this.roleOrder();
-    while (this.cs.length < want) {
+    const crew = () => this.cs.filter((c) => c.role !== "trader");
+    while (crew().length < want) {
       const role = order.find((r) => !this.cs.some((c) => c.role === r));
       if (!role) break;
       this.spawn(role);
     }
-    while (this.cs.length > want) {
-      const victim = [...this.cs].sort((a, b) => order.indexOf(b.role) - order.indexOf(a.role)).find((c) => !c.follow);
+    while (crew().length > want) {
+      const victim = crew().sort((a, b) => order.indexOf(b.role) - order.indexOf(a.role)).find((c) => !c.follow);
       if (!victim) break;
       this.despawn(victim);
     }
@@ -162,8 +173,10 @@ export class Colony {
     for (const [s, lvl] of Object.entries(def.levels)) skills[s as Skill] = XP_TABLE[lvl!];
     skills.hitpoints = Math.max(skills.hitpoints, XP_TABLE[10]);
     const fab = r.nodes[0];
+    const stall = r.nodes.find((n) => n.kind === "stall");
     const [cx, cz] = role === "quartermaster" ? [fab.tx, fab.tz] : r.spawn;
-    const [tx, tz] = clampToBounds(r.bounds!, cx + Math.floor(Math.random() * 5) - 2, cz + Math.floor(Math.random() * 5) - 2);
+    const [tx, tz] = role === "trader" && stall ? traderPost(stall)
+      : clampToBounds(r.bounds!, cx + Math.floor(Math.random() * 5) - 2, cz + Math.floor(Math.random() * 5) - 2);
     const weapon = def.weapon && WEAPONS[def.weapon] ? def.weapon : null;
     const p: Player = {
       ws: BOT_WS, id, token: "", name: this.nameFor(role), tx, tz, skills, inv: Array(INV_SLOTS).fill(null),
@@ -236,7 +249,7 @@ export class Colony {
       this.helpAt.set(h, t + 8);
       const mine = this.cs.find((c) => c.follow === h);
       if (mine) return this.say(mine, `Right here, ${h.name}.`);
-      const free = this.cs.filter((c) => !c.follow);
+      const free = this.cs.filter((c) => !c.follow && c.role !== "trader");
       if (!free.length) {
         if (this.cs.length) this.say(this.cs[0], `Everyone's on escort duty. Hang in there, ${h.name}!`);
         return;
@@ -295,6 +308,7 @@ export class Colony {
       case "guard": return this.guard(c, attacker);
       case "medic": return this.medic(c, attacker);
       case "quartermaster": return this.quartermaster(c, attacker);
+      case "trader": return this.trader_(c, attacker);
       default: return this.gatherer(c, attacker);
     }
   }
@@ -428,20 +442,32 @@ export class Colony {
     }
   }
 
+  /** The trader stays at her stall; she only shoots back if something comes for her. */
+  private trader_(c: Colonist, attacker: Npc | undefined) {
+    const r = this.room, p = c.p;
+    if (attacker) return this.fight(c, attacker);
+    if (p.action?.kind === "attack") p.action = null;
+    const stall = r.nodes.find((n) => n.kind === "stall");
+    if (!stall) return;
+    const [x, z] = traderPost(stall);
+    if (p.tx !== x || p.tz !== z) this.moveNear(c, x, z, 0);
+  }
+
   private giveKit(c: Colonist, h: Player) {
     const r = this.room, t = r.tickN;
     const kit = KIT.filter((i) => ITEMS[i]);
-    if (h.inv.filter((s) => s === null).length < kit.length) {
+    if (h.inv.filter((s) => s === null).length < kit.length + (r.countItem(h, "credits") ? 0 : 1)) {
       if (t - c.spoke > 100) { this.say(c, `Your pack's full, ${h.name}. Make some room and come see me.`); c.spoke = t; }
       return;
     }
     for (const i of kit) r.addItem(h, i);
+    r.addItems(h, "credits", KIT_CREDITS);
     h.dirty = true;
     this.giftPending.delete(h.token);
     this.markGifted(h.token);
     r.send(h.ws, { t: "inv", inv: h.inv });
-    r.send(h.ws, { t: "msg", text: `${c.p.name} hands you a starter kit: 3 regolith bricks and a medkit.` });
-    this.say(c, `There you go, ${h.name}. Bricks to build with, a medkit for emergencies.`);
+    r.send(h.ws, { t: "msg", text: `${c.p.name} hands you a starter kit: 3 regolith bricks, a medkit and ${KIT_CREDITS} credits.` });
+    this.say(c, `There you go, ${h.name}. Bricks to build with, a medkit for emergencies, and a few credits for the trader.`);
   }
 
   /** Miners gather ore and turn it into bricks/water/plates; surveyors pull core samples. */

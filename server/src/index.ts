@@ -9,11 +9,12 @@ import {
   Bounds, WorldNode, levelForXp, gatherChance, generateNodes, clampBounds, clampToBounds, inBounds,
   cleanName, cleanChat, GatherKind, HP_START_XP, WEAPONS, LEGACY_ITEMS, combatLevel, hitChance, maxHit, NPC_DEFS, NpcDef,
   NPC_RESPAWN, AGGRO_RANGE, LEASH_RANGE, WANDER_RANGE, WorldNpc, NpcKind, generateRifts, placeExtras,
-  ARMOUR, GEAR_SLOTS, Gear, GearSlot, emptyGear, gearBonus, playerDefRoll,
+  ARMOUR, GEAR_SLOTS, Gear, GearSlot, emptyGear, gearBonus, playerDefRoll, creditDrop,
 } from "./game";
 import { BOT_WS, Colony } from "./bots";
 import { CaveMap, generateCave, isCaveSite, surfaceOf, floorAt, stepOpen } from "./cave";
 import { Bank, Trades, Trade } from "./bank";
+import { Shop, Buyback, SHOP_RANGE } from "./shop";
 import { QuestState, cleanQuests, questDefsPublic, questEvent, questPoints, talk, choose, rub } from "./quests";
 import { Surge } from "./events";
 
@@ -45,7 +46,8 @@ type Action =
   | { kind: "craft"; recipe: Recipe; timer: number }
   | { kind: "attack"; npc: number }
   | { kind: "use"; node: number }
-  | { kind: "talk"; id: number };
+  | { kind: "talk"; id: number }
+  | { kind: "shop"; id: number };
 
 export interface Player {
   ws: WebSocket;
@@ -73,6 +75,7 @@ export interface Player {
   trade: Trade | null;
   dialog: { npc: number; quest: string | null; opts: string[] } | null;
   ops: Record<string, number>; // per-message-type rate limit: type -> last time (ms)
+  buyback?: Buyback[];          // this session's recent sales to the trader (shop.ts)
 }
 
 export interface Npc {
@@ -173,6 +176,7 @@ export class Room extends DurableObject<Env> {
   bank = new Bank(this);
   trades = new Trades(this, this.bank);
   surge = new Surge(this);
+  shop = new Shop(this);
   rowsWritten = 0;           // SQLite rows written since this instance started (see /info)
   private surfaceStub: DurableObjectStub<Room> | null = null;
 
@@ -324,6 +328,7 @@ export class Room extends DurableObject<Env> {
     if (!this.players.delete(p.ws)) return;
     for (const n of this.npcs) if (n.target === p) n.target = null;
     this.trades.onLeave(p);
+    this.shop.onLeave(p);
     this.broadcast({ t: "leave", id: p.id });
     this.colony.onLeave(p);
   }
@@ -394,6 +399,12 @@ export class Room extends DurableObject<Env> {
       case "trade_remove": return this.trades.remove(p, msg);
       case "trade_accept": return this.trades.accept(p);
       case "trade_decline": return this.trades.decline(p);
+      case "shop_open": if (!surface) return this.send(ws, { t: "msg", text: "There's no trader down here." }); if (this.tooFast(p, "shop", 300)) return; return this.onShopOpen(p, msg);
+      case "shop_close": return this.shop.close(p);
+      case "shop_buy": if (!surface || this.tooFast(p, "shop", 100)) return; return this.shop.buy(p, msg);
+      case "shop_sell": if (!surface || this.tooFast(p, "shop", 100)) return; return this.shop.sell(p, msg);
+      case "shop_buyback": if (!surface || this.tooFast(p, "shop", 100)) return; return this.shop.buyback(p, msg);
+      case "value": if (this.tooFast(p, "value", 100)) return; return this.shop.value(p, msg);
       case "test": if (this.env.MARSSCAPE_TEST === "1") return this.onTest(p, msg); // else: unknown
       default: return this.send(ws, { t: "err", text: `Unknown message type "${String(msg.t).slice(0, 20)}".` });
     }
@@ -727,6 +738,7 @@ export class Room extends DurableObject<Env> {
     if (!node) return this.send(p.ws, { t: "err", text: "Nothing there." });
     if (node.kind === "fabricator") return this.send(p.ws, { t: "msg", text: "Use the fabricator by choosing something to craft." });
     if (node.kind === "rift") return this.send(p.ws, { t: "msg", text: "The rift hums with hostile energy. Something is coming through." });
+    if (node.kind === "stall") return this.onShopOpen(p, {});
     if (node.kind === "pit" || node.kind === "locker" || node.kind === "ladder") {
       p.action = { kind: "use", node: node.id }; // runs when the queued walk ends next to it
       return;
@@ -773,6 +785,15 @@ export class Room extends DurableObject<Env> {
     this.colony.onChat(p, text);
   }
 
+  /** Walk up to the trader (by colonist id, or any id when omitted), then open the shop. */
+  onShopOpen(p: Player, msg: any) {
+    const t = this.colony.trader();
+    if (!t) return this.send(p.ws, { t: "msg", text: "There's nobody minding the stall right now." });
+    if (msg.id !== undefined && msg.id !== t.id) return this.send(p.ws, { t: "err", text: "They don't sell anything." });
+    p.dialog = null;
+    p.action = { kind: "shop", id: t.id };
+  }
+
   onTalk(p: Player, msg: any) {
     const c = this.colony.get(msg.id);
     if (!c) return this.send(p.ws, { t: "err", text: "They don't have anything to say." });
@@ -795,6 +816,11 @@ export class Room extends DurableObject<Env> {
     }
     if (Array.isArray(msg.give)) {
       for (const it of msg.give.slice(0, 28)) if (ITEMS[it]) this.addItem(p, it);
+      p.dirty = true;
+      this.send(p.ws, { t: "inv", inv: p.inv });
+    }
+    if (Number.isInteger(msg.credits) && msg.credits > 0) {
+      this.addItems(p, "credits", Math.min(1_000_000, msg.credits));
       p.dirty = true;
       this.send(p.ws, { t: "inv", inv: p.inv });
     }
@@ -947,6 +973,9 @@ export class Room extends DurableObject<Env> {
     for (const [item, chance] of n.def.rare) if (Math.random() < chance) drops.push(item);
     const got: string[] = [];
     for (const d of drops) if (this.addItem(killer, d)) got.push(ITEMS[d].name);
+    const cr = creditDrop(n.def.level);
+    drops.push("credits");
+    if (this.addItems(killer, "credits", cr)) got.push(`${cr} credits`);
     killer.dirty = true;
     this.send(killer.ws, { t: "inv", inv: killer.inv });
     const lost = got.length < drops.length ? " (some loot was lost: inventory full)" : "";
@@ -1057,6 +1086,16 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  /** Add `n` of an item (n > 1 only makes sense for stackables). */
+  addItems(p: Player, item: string, n: number): boolean {
+    if (n <= 0) return true;
+    if (!this.addItem(p, item)) return false;
+    const s = p.inv.find((s) => s && s.item === item);
+    if (s && ITEMS[item]?.stack) s.qty += n - 1;
+    else for (let i = 1; i < n; i++) this.addItem(p, item);
+    return true;
+  }
+
   addItem(p: Player, item: string): boolean {
     if (ITEMS[item]?.stack) {
       const s = p.inv.find((s) => s && s.item === item);
@@ -1095,6 +1134,7 @@ export class Room extends DurableObject<Env> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.surge.reset();
+    this.shop.persist();
     // the only routine meta writes: once per stop instead of every few ticks
     this.setMeta("tick", String(this.tickN));
     this.setMeta("next_id", String(this.nextId));
@@ -1136,6 +1176,8 @@ export class Room extends DurableObject<Env> {
         anim = this.tickPlayerAttack(p, p.action);
       } else if (p.action?.kind === "use") {
         anim = this.tickUse(p, p.action);
+      } else if (p.action?.kind === "shop") {
+        anim = this.tickShop(p, p.action);
       } else if (p.action?.kind === "talk") {
         anim = this.tickTalk(p, p.action);
       }
@@ -1146,6 +1188,7 @@ export class Room extends DurableObject<Env> {
       }
     }
     this.trades.tick();
+    if (!this.cave) this.shop.tick();
     const alive = this.everyone();
     if (this.players.size) for (const n of [...this.npcs]) this.tickNpc(n, alive);
 
@@ -1184,6 +1227,20 @@ export class Room extends DurableObject<Env> {
     if (node.kind === "locker") this.bank.open(p);
     else if (node.kind === "pit") this.usePit(p);
     else if (node.kind === "ladder" && this.cave) void this.leaveCave(p, "pit");
+    return ANIM.idle;
+  }
+
+  /** Walk up to the trader, then open the shop window. */
+  tickShop(p: Player, a: { id: number }): number {
+    const t = this.colony.trader();
+    if (!t || t.id !== a.id) { p.action = null; return ANIM.idle; }
+    if (dist(p.tx, p.tz, t.tx, t.tz) > SHOP_RANGE) {
+      [p.tx, p.tz] = this.stepToward(p.tx, p.tz, t.tx, t.tz);
+      p.dirty = true;
+      return ANIM.walk;
+    }
+    p.action = null;
+    this.shop.openFor(p);
     return ANIM.idle;
   }
 
