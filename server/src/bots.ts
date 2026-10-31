@@ -6,7 +6,7 @@
 import type { Npc, Player, Room } from "./index";
 import {
   GatherKind, INV_SLOTS, ITEMS, NODE_DEFS, NPC_DEFS, RECIPES, Recipe, SKILLS, Skill, WEAPONS, WorldNode, XP_TABLE,
-  clampToBounds, fnv1a, levelForXp,
+  clampToBounds, emptyGear, fnv1a, levelForXp,
 } from "./game";
 
 /** One shared stand-in socket for every colonist. Room.send() skips it, so bots cost no JSON. */
@@ -121,9 +121,20 @@ export class Colony {
     return c ? { bot: true, role: c.role } : {};
   }
 
+  /** The colonist with this player id, for talking to. */
+  get(id: unknown): { p: Player; role: Role } | null {
+    const c = this.cs.find((c) => c.p.id === id);
+    return c ? { p: c.p, role: c.role } : null;
+  }
+
+  /** Roles present in the room right now (quests fall back to the quartermaster). */
+  roles(): Set<Role> {
+    return new Set(this.cs.map((c) => c.role));
+  }
+
   /** About 4 colonists with one human, one fewer per extra human, never below 1. */
   rebalance(humans: number) {
-    if (!this.room.bounds || humans <= 0) return;
+    if (!this.room.bounds || humans <= 0 || this.room.cave) return; // nobody lives in the lava tube
     const want = Math.min(4, Math.max(1, 5 - humans));
     const order = this.roleOrder();
     while (this.cs.length < want) {
@@ -147,7 +158,6 @@ export class Colony {
     const r = this.room;
     const def = ROLES[role];
     const id = r.nextId++;
-    r.setMeta("next_id", String(r.nextId));
     const skills = Object.fromEntries(SKILLS.map((s) => [s, 0])) as Record<Skill, number>;
     for (const [s, lvl] of Object.entries(def.levels)) skills[s as Skill] = XP_TABLE[lvl!];
     skills.hitpoints = Math.max(skills.hitpoints, XP_TABLE[10]);
@@ -159,6 +169,7 @@ export class Colony {
       ws: BOT_WS, id, token: "", name: this.nameFor(role), tx, tz, skills, inv: Array(INV_SLOTS).fill(null),
       path: [], run: false, action: null, anim: 0, sent: `${tx},${tz},0`, dirty: false, lastChat: 0,
       lastInput: Date.now(), hp: levelForXp(skills.hitpoints), weapon, nextAttack: 0, nextEat: 0,
+      gear: emptyGear(), quests: {}, trade: null, dialog: null, ops: {},
     };
     const c: Colonist = { p, role, follow: null, followUntil: 0, wait: r.tickN + 3, plan: 0, healReady: 0, rearmAt: 0, spoke: 0 };
     this.cs.push(c);
@@ -323,6 +334,12 @@ export class Colony {
    */
   private guard(c: Colonist, attacker: Npc | undefined) {
     const r = this.room, p = c.p, t = r.tickN;
+    // a Rift Surge boss is everyone's problem
+    const boss = r.surge.boss;
+    if (boss && !boss.respawnAt && r.npcs.includes(boss) && cheb(p.tx, p.tz, boss.tx, boss.tz) <= 40) {
+      if (!(p.action?.kind === "attack" && p.action.npc === boss.id) && t - c.spoke > 50) { this.say(c, "Surge! Everyone on the rift!"); c.spoke = t; }
+      return this.fight(c, boss);
+    }
     let threat: Npc | undefined;
     for (const n of r.npcs) {
       const v = n.target;

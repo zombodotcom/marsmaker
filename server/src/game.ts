@@ -30,7 +30,9 @@ export function levelForXp(xp: number): number {
 }
 
 // ---- Resource nodes ---------------------------------------------------------
-export type NodeKind = "regolith" | "ice" | "hematite" | "outcrop" | "fabricator" | "rift";
+export type NodeKind =
+  | "regolith" | "ice" | "hematite" | "outcrop" | "void_vein" | "fossil"
+  | "fabricator" | "rift" | "pit" | "ladder" | "locker";
 
 export interface NodeDef {
   skill: Skill;
@@ -42,12 +44,15 @@ export interface NodeDef {
   verb: string;      // "You mine some regolith."
 }
 
-export type GatherKind = Exclude<NodeKind, "fabricator" | "rift">;
+export type GatherKind = Exclude<NodeKind, "fabricator" | "rift" | "pit" | "ladder" | "locker">;
 export const NODE_DEFS: Record<GatherKind, NodeDef> = {
   regolith: { skill: "mining", level: 1, xp: 18, item: "regolith", deplete: 1 / 8, respawn: 8, verb: "You scoop up some regolith." },
   ice: { skill: "mining", level: 15, xp: 35, item: "ice", deplete: 1 / 5, respawn: 20, verb: "You chip off a chunk of buried ice." },
   hematite: { skill: "mining", level: 30, xp: 65, item: "hematite", deplete: 1 / 4, respawn: 45, verb: "You mine some hematite." },
   outcrop: { skill: "survey", level: 1, xp: 25, item: "sample", deplete: 1 / 6, respawn: 25, verb: "You take a core sample from the outcrop." },
+  // lava-tube cave only
+  void_vein: { skill: "mining", level: 45, xp: 90, item: "void_crystal", deplete: 1 / 4, respawn: 60, verb: "You prise a void crystal out of the glowing vein." },
+  fossil: { skill: "survey", level: 40, xp: 80, item: "ancient_relic", deplete: 1 / 3, respawn: 80, verb: "You brush the dust off something ancient: a relic of the old Martians." },
 };
 
 /** Ticks between gather attempts. */
@@ -75,6 +80,17 @@ export const ITEMS: Record<string, { name: string; stack: boolean }> = {
   medkit: { name: "Medkit", stack: false },
   void_crystal: { name: "Void Crystal", stack: true },
   chitin: { name: "Xeno Chitin", stack: false },
+  ancient_relic: { name: "Ancient Relic", stack: false },
+  xp_lamp: { name: "Insight Lamp", stack: false },
+  chitin_helmet: { name: "Chitin Helmet", stack: false },
+  chitin_suit: { name: "Chitin Suit", stack: false },
+  iron_helmet: { name: "Iron Helmet", stack: false },
+  iron_suit: { name: "Iron Suit", stack: false },
+  void_shield: { name: "Void Shield", stack: false },
+  relic_helmet: { name: "Relic Helm", stack: false },
+  relic_suit: { name: "Relic Armour", stack: false },
+  rift_blade: { name: "Rift Blade", stack: false },
+  void_cape: { name: "Void Cape", stack: false },
 };
 
 /** Item ids from before the space re-skin; saved inventories are mapped on load. */
@@ -88,6 +104,7 @@ export interface Recipe {
   output: string;
   ticks: number;
   text: string;
+  quest?: string;   // quest id that must be done before this recipe can be made
 }
 
 export const RECIPES: Recipe[] = [
@@ -99,7 +116,45 @@ export const RECIPES: Recipe[] = [
   { id: "rifle", level: 40, xp: 140, inputs: { iron_plate: 4, drill_bit: 1 }, output: "rifle", ticks: 5, text: "You assemble a pulse rifle." },
   { id: "plasma_gun", level: 60, xp: 300, inputs: { iron_plate: 3, void_crystal: 5 }, output: "plasma_gun", ticks: 6, text: "You bind the void crystals into a plasma cannon. It hums." },
   { id: "drill_bit", level: 35, xp: 90, inputs: { sample: 1, iron_plate: 1 }, output: "drill_bit", ticks: 5, text: "You machine a drill bit. Mining feels easier with it." },
+  // armour
+  { id: "chitin_helmet", level: 10, xp: 30, inputs: { chitin: 3 }, output: "chitin_helmet", ticks: 4, text: "You lace the chitin plates into a helmet." },
+  { id: "chitin_suit", level: 15, xp: 45, inputs: { chitin: 5 }, output: "chitin_suit", ticks: 4, text: "You stitch the chitin into a suit. It smells faintly of the void." },
+  { id: "iron_helmet", level: 30, xp: 70, inputs: { iron_plate: 2, chitin: 1 }, output: "iron_helmet", ticks: 4, text: "You hammer out an iron helmet." },
+  { id: "iron_suit", level: 35, xp: 110, inputs: { iron_plate: 4, chitin: 2 }, output: "iron_suit", ticks: 5, text: "You rivet together an iron suit." },
+  { id: "void_shield", level: 50, xp: 180, inputs: { iron_plate: 2, void_crystal: 6 }, output: "void_shield", ticks: 5, text: "You tune the crystals into a shield generator. The air around you shimmers." },
+  { id: "relic_helmet", level: 70, xp: 260, inputs: { ancient_relic: 1, iron_plate: 2, void_crystal: 4 }, output: "relic_helmet", ticks: 6, text: "You forge a helm the old Martians would recognise.", quest: "echoes" },
+  { id: "relic_suit", level: 70, xp: 400, inputs: { ancient_relic: 2, iron_plate: 3, void_crystal: 6 }, output: "relic_suit", ticks: 6, text: "You forge relic armour. The glyphs on it glow when rifts are near.", quest: "echoes" },
 ];
+
+// ---- Armour -----------------------------------------------------------------
+export const GEAR_SLOTS = ["helmet", "suit", "shield", "cape"] as const;
+export type GearSlot = (typeof GEAR_SLOTS)[number];
+export type Gear = Record<GearSlot, string | null>;
+export const emptyGear = (): Gear => ({ helmet: null, suit: null, shield: null, cape: null });
+
+/** slot, defence level to wear it, defence bonus (added to the defence roll). */
+export const ARMOUR: Record<string, { slot: GearSlot; level: number; def: number }> = {
+  chitin_helmet: { slot: "helmet", level: 1, def: 6 },
+  chitin_suit: { slot: "suit", level: 5, def: 12 },
+  iron_helmet: { slot: "helmet", level: 20, def: 14 },
+  iron_suit: { slot: "suit", level: 25, def: 28 },
+  void_shield: { slot: "shield", level: 40, def: 25 },
+  relic_helmet: { slot: "helmet", level: 60, def: 24 },
+  relic_suit: { slot: "suit", level: 60, def: 48 },
+  void_cape: { slot: "cape", level: 1, def: 2 }, // mostly cosmetic: the Rift Surge trophy
+};
+
+export function gearBonus(g: Gear): number {
+  return GEAR_SLOTS.reduce((a, s) => a + (g[s] ? ARMOUR[g[s]!]?.def ?? 0 : 0), 0);
+}
+
+/** A player's defence roll against creature attacks: (defence + 9) * (armour bonus + 64). */
+export function playerDefRoll(defence: number, bonus: number): number {
+  return (defence + 9) * (bonus + 64);
+}
+
+/** XP from rubbing an Insight Lamp on a skill at the given level. */
+export const lampXp = (level: number) => 100 + 25 * level;
 
 // ---- Deterministic RNG ------------------------------------------------------
 export function fnv1a(s: string): number {
@@ -242,6 +297,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   pistol: { level: 1, speed: 4, acc: 30, str: 60, range: 7 },
   rifle: { level: 20, speed: 5, acc: 50, str: 100, range: 7 },
   plasma_gun: { level: 40, speed: 6, acc: 80, str: 150, range: 7 },
+  rift_blade: { level: 50, speed: 4, acc: 95, str: 170, range: 2 }, // Rift Surge unique
 };
 
 /** Old-school combat level from ranged, defence and hitpoints (no melee/magic/prayer here). */
@@ -265,7 +321,7 @@ export function maxHit(level: number, strBonus: number): number {
  * open into the void. `skitter` Void Skitter, `stalker` Dust Stalker, `golem` Rift Golem,
  * `leviathan` Void Leviathan (boss).
  */
-export type NpcKind = "skitter" | "stalker" | "golem" | "leviathan";
+export type NpcKind = "skitter" | "stalker" | "golem" | "leviathan" | "glowworm" | "crystal_horror";
 export interface NpcDef {
   name: string;
   level: number; hp: number; att: number; def: number; maxHit: number; speed: number; range: number;
@@ -277,6 +333,9 @@ export const NPC_DEFS: Record<NpcKind, NpcDef> = {
   stalker: { name: "Dust Stalker", level: 20, hp: 30, att: 18, def: 15, maxHit: 5, speed: 4, range: 1, core: 0.5, rare: [["pistol", 1 / 15], ["rifle", 1 / 80]] },
   golem: { name: "Rift Golem", level: 45, hp: 70, att: 40, def: 38, maxHit: 10, speed: 6, range: 1, core: 1, rare: [["rifle", 1 / 30]] },
   leviathan: { name: "Void Leviathan", level: 90, hp: 250, att: 85, def: 80, maxHit: 20, speed: 5, range: 4, core: 5, rare: [["plasma_gun", 1 / 4]] },
+  // lava-tube cave
+  glowworm: { name: "Glowworm", level: 30, hp: 40, att: 28, def: 25, maxHit: 6, speed: 4, range: 1, core: 0.4, rare: [["rifle", 1 / 40]] },
+  crystal_horror: { name: "Crystal Horror", level: 60, hp: 90, att: 58, def: 55, maxHit: 13, speed: 5, range: 2, core: 2, rare: [["ancient_relic", 1 / 6], ["plasma_gun", 1 / 40]] },
 };
 export const NPC_RESPAWN = 50;
 export const AGGRO_RANGE = 5;
@@ -327,4 +386,32 @@ export function generateRifts(siteId: string, bounds: Bounds, spawn: [number, nu
     if (rf === far && rifts.length >= 3) npcs.push({ id: npcs.length + 1, kind: "leviathan", home: [rf.tx, rf.tz] });
   });
   return npcs;
+}
+
+/**
+ * Extra surface nodes, appended after the rifts with their own RNG so existing layouts don't move:
+ * a `locker` (the bank) two tiles from the fabricator, and a `pit` (the way down into the lava tube)
+ * 10-40 tiles from spawn.
+ */
+export function placeExtras(siteId: string, bounds: Bounds, spawn: [number, number], nodes: WorldNode[]) {
+  const used = new Set(nodes.map((n) => `${n.tx},${n.tz}`));
+  const fab = nodes[0];
+  const free = (tx: number, tz: number) => inBounds(bounds, tx, tz) && !used.has(`${tx},${tz}`)
+    && !(tx === spawn[0] && tz === spawn[1]);
+  const add = (kind: NodeKind, tx: number, tz: number) => {
+    used.add(`${tx},${tz}`);
+    nodes.push({ id: nodes.length, kind, tx, tz });
+  };
+  const lockerAt = [[-2, 0], [0, -2], [2, 0], [0, 2], [-2, -2], [2, -2], [-2, 2], [2, 2], [-3, 0], [0, -3]]
+    .map(([dx, dz]) => [fab.tx + dx, fab.tz + dz]).find(([x, z]) => free(x, z));
+  if (lockerAt) add("locker", lockerAt[0], lockerAt[1]);
+  const rand = mulberry32(fnv1a("marsscape-pit:" + siteId));
+  for (let i = 0; i < 400; i++) {
+    const ang = rand() * Math.PI * 2, r = 10 + rand() * 30;
+    const tx = Math.round(spawn[0] + Math.cos(ang) * r), tz = Math.round(spawn[1] + Math.sin(ang) * r);
+    if (!free(tx, tz) || !free(tx + 1, tz)) continue;
+    if (nodes.some((n) => n.kind === "rift" && Math.max(Math.abs(n.tx - tx), Math.abs(n.tz - tz)) < 8)) continue;
+    add("pit", tx, tz);
+    break;
+  }
 }

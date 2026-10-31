@@ -13,10 +13,12 @@ will only ever be added to, never changed.
 |---|---|
 | `GET /health` | `ok` (text) |
 | `GET /room/<site_id>` with `Upgrade: websocket` | the room's WebSocket |
-| `GET /room/<site_id>/info` *(extra)* | `{"site","players","max","bounds","bots","ticking","tick"}` JSON, CORS `*`. `players` counts humans only. |
+| `GET /room/<site_id>~cave` with `Upgrade: websocket` *(extra)* | the lava tube under that site (see [Lava-tube cave](#lava-tube-cave-extra)) |
+| `GET /room/<site_id>/info` *(extra)* | `{"site","room","players","max","bounds","bots","ticking","tick","surge","rows_written"}` JSON, CORS `*`. `players` counts humans only; `room` is `"surface"` or `"cave"`; `surge` is the Rift Surge phase; `rows_written` counts SQLite rows written since the room last started. |
 
-`site_id` is the viewer's site name or live id. It must match `[A-Za-z0-9_-]{1,64}`; anything
-else gets `400`. One Durable Object (room) exists per site id. Any Origin is allowed.
+`site_id` is the viewer's site name or live id. It must match `[A-Za-z0-9_-]{1,64}`, optionally
+followed by `~cave`; anything else gets `400`. One Durable Object (room) exists per site id, and
+one more per cave. Any Origin is allowed.
 
 ## Session
 
@@ -26,7 +28,11 @@ else gets `400`. One Durable Object (room) exists per site id. Any Origin is all
 4. On close, everyone else gets `leave`. Progress is saved.
 
 Keep the `token` from `welcome` (e.g. in localStorage) and send it in the next `hello` to get the
-same character back. Tokens are per site: each site is its own world.
+same character back. Tokens are per site: each site is its own world. The site's cave uses the same
+token and the same character.
+
+Progress is saved when you leave, travel, bank or trade, and otherwise every 50 ticks (30 s) while
+something changed.
 
 ## Client → server
 
@@ -70,6 +76,32 @@ Use the fabricator (node id 0); stand within 1 tile. Keeps making more while mat
 {"t":"eat","slot":n}         // use a medkit: +20 hp
 ```
 
+*(extra)* messages, each explained in its own section below:
+
+```json
+{"t":"equip","slot":n}                       // also wears armour: it goes to the item's gear slot
+{"t":"unequip","gear":"helmet"}              // "weapon" (default), "helmet", "suit", "shield", "cape"
+{"t":"act","node":id}                        // also: "locker" opens the bank, "pit" climbs down, "ladder" climbs up
+{"t":"bank_deposit","slot":n,"qty":k}        // qty: a positive integer or "all"
+{"t":"bank_withdraw","idx":n,"qty":k}        // idx into the bank's items list
+{"t":"trade_request","id":playerId}
+{"t":"trade_offer","slot":n,"qty":k}         // qty: a positive integer or "all"
+{"t":"trade_remove","idx":n,"qty":k}         // idx into your own offer list
+{"t":"trade_accept"}
+{"t":"trade_decline"}
+{"t":"talk","id":playerId}                   // a colonist; you walk over first
+{"t":"dialog_choose","option":"accept"}      // an option id from the last dialog
+{"t":"rub","slot":n,"skill":"mining"}        // use an Insight Lamp on a skill
+```
+
+Rate limits on top of the general one *(extra)*: `talk` once per 400 ms, `rub` once per 300 ms,
+bank actions once per 100 ms and `trade_request` once per 500 ms. A message over its limit is
+refused with `{"t":"err","text":"Slow down."}`.
+
+**While you are trading**, anything that takes items out of your inventory is refused with
+`{"t":"msg","text":"Finish or decline your trade first."}`. That covers `drop`, `eat`, `craft`,
+`equip`/`unequip`, `rub`, the bank, and climbing down the pit.
+
 ## Server → client
 
 ```json
@@ -85,8 +117,17 @@ Use the fabricator (node id 0); stand within 1 tile. Keeps making more while mat
  "xp_table":[0,0,83,174,...],                            // (extra) index = level, xp needed
  "recipes":[{"id","level","xp","inputs":{"regolith":2},"output"}],  // (extra)
  "items":{"regolith":{"name":"Regolith","stack":false},...},        // (extra)
- "weapons":{"none":{"level","speed","acc","str","range"},...}}      // (extra)
+ "weapons":{"none":{"level","speed","acc","str","range"},...},     // (extra)
+ "armour":{"iron_suit":{"slot":"suit","level":25,"def":28},...},     // (extra) see Armour
+ "quest_defs":[{"id","name","giver","qp","req":{"survey":40},"steps":[{"kind","target","n","text"}],"reward":"text"}],  // (extra)
+ "creatures":{"skitter":{"name","level","hp","max_hit","range"},...}, // (extra)
+ "room":"surface",                                       // (extra) or "cave"
+ "event":null,                                           // (extra) the current Rift Surge event, or null
+ "cave":{"w":120,"h":120,"rle":"..."},"exit":[tx,tz]}    // (extra) cave rooms only
 ```
+`you` also carries *(extra)* `"gear":{"helmet","suit","shield","cape"}` (item id or null each),
+`"quests":{"<id>":{"s":"active"|"done","step":n,"p":n}}` and `"quest_points":n`.
+Recipes may carry *(extra)* `"quest":"<id>"`: that quest must be done before you can make it.
 `you.combat` *(extra)* is the combat level. `npcs[].level` and `npcs[].dead` are *(extra)*.
 Skill values are XP, not levels. Levels: use `xp_table` or the formula below.
 
@@ -119,6 +160,24 @@ Events:
 {"t":"heal","src":"p:4","dst":"p:7","amt":5}       // (extra) a medic colonist healed someone; sent to everyone
 {"t":"pong","n":1235}
 ```
+
+*(extra)* events, each explained in its own section below:
+
+```json
+{"t":"gear","weapon":"pistol","helmet":"iron_helmet","suit":null,"shield":null,"cape":null,"bonus":14}
+{"t":"travel","room":"<site>~cave"}            // reconnect to that room with your token; the server closes this socket (1000 "travel")
+{"t":"bank","items":[{"item","qty"}],"slots":100}
+{"t":"trade_request","from":id,"name":"Bea"}
+{"t":"trade","stage":1,"with":id,"name":"Bea","mine":[{"item","qty"}],"theirs":[...],"accepted":{"me":false,"them":false}}
+{"t":"trade_end","result":"done"|"cancelled","reason":"..."}
+{"t":"dialog","npc":id,"name":"Rhea","role":"quartermaster","text":"...","quest":"brick_drive"|null,"options":[{"id","text"}]}
+{"t":"dialog_end"}
+{"t":"quest","id":"brick_drive","state":"active"|"done","step":0,"progress":3,"goal":5,"qp":1}
+{"t":"event","kind":"surge","phase":"warning"|"open"|"boss"|"ended","tx","tz","ends_in":200}
+{"t":"npc_spawn","npc":{"id","kind","tx","tz","hp","max","level","dead"}}   // a creature that wasn't in welcome
+{"t":"npc_despawn","id":100004}
+```
+The weapon-only `equip` event is still sent on every weapon change, for older clients.
 After a gather or craft the order is `msg`, `xp`, (`level`), `inv`.
 
 ## Skills and levels
@@ -143,8 +202,16 @@ each gather kind). Rifts are extra: 3–40, two of them 25–40 tiles from spawn
 | `ice` | mining | 15 | 35 | `ice` | 20 |
 | `hematite` | mining | 30 | 65 | `hematite` | 45 |
 | `outcrop` | survey | 1 | 25 | `sample` | 25 |
-| `fabricator` | — | — | — | crafting station, id 0, never depletes | — |
+| `void_vein` *(extra, cave)* | mining | 45 | 90 | `void_crystal` | 60 |
+| `fossil` *(extra, cave)* | survey | 40 | 80 | `ancient_relic` | 80 |
+| `fabricator` | — | — | — | crafting station, id 0 on the surface, never depletes | — |
 | `rift` | — | — | — | a tear into the void where creatures come from, never depletes | — |
+| `locker` *(extra)* | — | — | — | the colony locker (bank), 2 tiles from the fabricator | — |
+| `pit` *(extra)* | — | — | — | the way down into the lava tube, 10–40 tiles from spawn | — |
+| `ladder` *(extra, cave)* | — | — | — | the way back up, id 0 in the cave | — |
+
+The locker and the pit are appended after the rifts (their own random seed), so older node ids
+and positions don't move.
 
 Success per attempt: `0.3 + 0.015 * (level - req)`, +0.15 for mining with a `drill_bit` in the
 inventory, clamped to 0.05–0.95.
@@ -161,11 +228,20 @@ inventory, clamped to 0.05–0.95.
 | `drill_bit` | 35 | 1 sample + 1 iron_plate | 90 |
 | `rifle` | 40 | 4 iron_plate + 1 drill_bit | 140 |
 | `plasma_gun` | 60 | 3 iron_plate + 5 void_crystal | 300 |
+| `chitin_helmet` *(extra)* | 10 | 3 chitin | 30 |
+| `chitin_suit` *(extra)* | 15 | 5 chitin | 45 |
+| `iron_helmet` *(extra)* | 30 | 2 iron_plate + 1 chitin | 70 |
+| `iron_suit` *(extra)* | 35 | 4 iron_plate + 2 chitin | 110 |
+| `void_shield` *(extra)* | 50 | 2 iron_plate + 6 void_crystal | 180 |
+| `relic_helmet` *(extra, needs quest `echoes`)* | 70 | 1 ancient_relic + 2 iron_plate + 4 void_crystal | 260 |
+| `relic_suit` *(extra, needs quest `echoes`)* | 70 | 2 ancient_relic + 3 iron_plate + 6 void_crystal | 400 |
 
 Items: `regolith`, `ice`, `hematite`, `sample`, `brick`, `water`, `iron_plate`, `drill_bit`,
 `pistol` (Blaster), `rifle` (Pulse Rifle), `plasma_gun` (Plasma Cannon), `medkit`, `chitin` (Xeno Chitin),
-`void_crystal` (Void Crystal, stacks). Everything else takes
-one slot per item.
+`void_crystal` (Void Crystal, stacks), and *(extra)* `ancient_relic` (Ancient Relic), `xp_lamp`
+(Insight Lamp), `chitin_helmet`, `chitin_suit`, `iron_helmet`, `iron_suit`, `void_shield`,
+`relic_helmet` (Relic Helm), `relic_suit` (Relic Armour), `rift_blade` (Rift Blade) and
+`void_cape` (Void Cape). Everything except void crystals takes one slot per item.
 
 ## Combat
 
@@ -179,12 +255,14 @@ read as `void_crystal` / `chitin` when a saved player loads.
 | `pistol` | 1 | 4 | 7 |
 | `rifle` | 20 | 5 | 7 |
 | `plasma_gun` | 40 | 6 | 7 |
+| `rift_blade` *(extra, Rift Surge unique)* | 50 | 4 | 2 |
 
 `attack` sets your target. If it is out of range the server steps you toward it each tick (you
 can also `walk` first). Line of sight is not checked (the server has no terrain).
 
 - Your accuracy roll is `(ranged + 8) * (weapon acc + 64)`. The creature's defence roll is `(def + 9) * 64`.
 - Hit chance is `A > D ? 1 - (D+2)/(2(A+1)) : A/(2(D+1))`.
+- A creature's attack roll is `(att + 9) * 64`. Your defence roll is `(defence + 9) * (armour bonus + 64)` *(extra: the armour bonus; it was 0 before)*.
 - Max hit is `floor(0.5 + (ranged + 8) * (weapon str + 64) / 640)`. Damage is uniform from 0 to the max hit.
 - XP per damage dealt: ranged ×4, hitpoints ×1.33, and defence ×1 *(extra, so defence trains)*.
 
@@ -194,6 +272,8 @@ can also `walk` first). Line of sight is not checked (the server has no terrain)
 | `stalker` (Dust Stalker) | 20 | 30 | 5 | 4 | chitin, crystal 50%, blaster 1/15, pulse rifle 1/80 |
 | `golem` (Rift Golem) | 45 | 70 | 10 | 6 | chitin, 1 crystal, pulse rifle 1/30 |
 | `leviathan` (Void Leviathan, boss) | 90 | 250 | 20 (range 4) | 5 | chitin, 5 crystals, plasma cannon 1/4 |
+| `glowworm` *(extra, cave)* | 30 | 40 | 6 | 4 | chitin, crystal 40%, pulse rifle 1/40 |
+| `crystal_horror` *(extra, cave)* | 60 | 90 | 13 (range 2) | 5 | chitin, 2 crystals, ancient relic 1/6, plasma cannon 1/40 |
 
 **Creature AI:**
 - **Placement:** creatures live at rifts. The two rifts near spawn hold skitters, and the farthest rift also holds one leviathan.
@@ -237,8 +317,143 @@ Colonists follow the same rules as players. They have levels for their role, use
 craft and combat formulas, can be attacked, die, and respawn at spawn. They are never saved. The
 room still stops ticking and hibernates when the last *human* leaves.
 
-**Dev only:** with `MARSSCAPE_TEST=1` (`wrangler dev --var MARSSCAPE_TEST:1`), `{"t":"test","hp":n}`
-sets your own hp. In production that message is answered with "Unknown message type".
+**Dev only:** with `MARSSCAPE_TEST=1` (`wrangler dev --var MARSSCAPE_TEST:1`), `{"t":"test",...}`
+accepts `hp` (set your hp), `skills` (`{"ranged":xp,...}`), `give` (a list of item ids),
+`surge` (`"now"` starts a 3-tick warning, `"boss"` brings the boss next to you) and
+`defsim` + `n` (samples a creature kind's hit rate against you; answered with
+`{"t":"test","hit_rate","bonus"}`). In production that message is answered with "Unknown message type".
+
+## Lava-tube cave *(extra)*
+
+Every site has a lava tube under it: its own room, `<site_id>~cave`.
+- **Going down:** `act` on the surface `pit` (walk next to it first). The server saves you and sends
+  `{"t":"travel","room":"<site_id>~cave"}`, then closes the socket with `1000 "travel"`. Connect to
+  `/room/<site_id>~cave` and send the usual `hello` with your token (`bounds` and `spawn` are ignored
+  in the cave). A cave `hello` without a known token is refused: you can only arrive through the pit.
+- **Your character comes with you:** skills, inventory, gear, hp and quests. The cave borrows it from
+  the surface room and hands it back when you leave, so nothing can be in two places.
+- **Coming back up:** `act` on the `ladder` (node id 0, at `exit`) sends `travel` back to `<site_id>`,
+  and you reappear next to the pit. Dying in the cave sends you up to the landing site (you lose
+  your weapon, as on the surface). Disconnecting in the cave also puts you next to the pit next time.
+- **Logging in on the surface while still in the cave** (another tab, a dead connection) takes the
+  character back from the cave; the cave socket gets `err` "Logged in from another location.".
+- **No colonists, fabricator, bank, trading or Rift Surges** down there.
+
+**Layout.** 120 × 120 tiles, `0 <= tx < w`, `0 <= tz < h`, generated deterministically from the
+surface site id: a meandering tube with side branches and chambers. `welcome.cave.rle` is the map as
+comma-separated run lengths over the tiles in row-major order (`index = tz * w + tx`), alternating
+wall, floor, wall, ... and **starting with a wall run** (which may be 0). The runs add up to `w * h`.
+
+```js
+const g = new Uint8Array(w * h); let i = 0, v = 0;           // 0 = wall, 1 = floor
+for (const n of rle.split(",").map(Number)) { g.fill(v, i, i + n); i += n; v ^= 1; }
+```
+
+**Walls are enforced.** Every step of a `walk` must land on floor, and a diagonal step also needs
+both orthogonal neighbours to be floor (no corner cutting). Otherwise the whole path is refused
+with `err` "You can't walk there.". Creatures follow the same rule. Line of sight is still not checked.
+
+**Content.** About 12 `void_vein` (mining 45 → void crystals) and 8 `fossil` (survey 40 → ancient
+relics) in the far chambers; 14 `glowworm` along the tubes and a few `crystal_horror` in the far
+chambers.
+
+## Colony locker (bank) *(extra)*
+
+The `locker` stands two tiles from the fabricator. `act` on it (walk next to it first) opens your
+bank: `{"t":"bank","items":[{"item","qty"},...],"slots":100}`. Every item kind stacks in the bank,
+up to 100 different kinds. The bank is per character (token) and per site, and is saved at once.
+
+- `bank_deposit` puts `qty` of the item in inventory slot `slot` into the bank, taking from every
+  slot holding that item (`"all"` = all of them).
+- `bank_withdraw` takes `qty` of bank entry `idx` into the inventory. Unstackable items need one
+  free slot each, and you get as many as fit. When an entry reaches 0 it is removed and later
+  indices shift down.
+- Both need you within 1 tile of the locker and answer with `inv` and the new `bank`.
+
+## Trading *(extra)*
+
+Between two human players in the same surface room, at most 10 tiles apart.
+1. `trade_request` with the other player's id. They get `trade_request`. When they request you
+   back (within 30 s) the trade opens: both get `trade` with `stage` 1.
+2. Each side adds items with `trade_offer` (from an inventory slot, up to what you haven't offered
+   yet) and takes them back with `trade_remove`. Items stay in your inventory until the end.
+   Every change resets both accepts.
+3. Both `trade_accept` → `stage` 2, the confirm screen: offers are locked (`err`) and the accepts reset.
+4. Both `trade_accept` again → the swap happens at once for both, or not at all. Both get `inv`
+   and `trade_end` with `result: "done"`.
+
+`trade_end` with `result: "cancelled"` and a `reason` comes when either side declines, a player
+leaves or moves more than 10 tiles away, or the swap is impossible (someone no longer has the items,
+or lacks inventory space). Colonists don't trade. Completed trades are logged on the server.
+
+## Quests *(extra)*
+
+Colonists hand out quests. `talk` to a colonist: you walk to within 2 tiles, then get a `dialog`.
+Answer with `dialog_choose` and one of its option ids:
+
+| option id | meaning |
+|---|---|
+| `accept` / `decline` | take the offered quest (`dialog.quest`) or not |
+| `offer:<quest id>` | the colonist has several open quests and lists them; pick one to hear its offer |
+| `turn_in` | hand in a finished quest and get the reward |
+| `bye` | close |
+
+Every choice is answered with `dialog_end` (or a new `dialog` for `offer:`). An option that wasn't
+in the last dialog is refused with `err` "That option isn't open.".
+
+A quest has one or more steps. Step kinds: `kill` (creature kind), `gather` (item from a node),
+`craft` (recipe output), `deliver` (have the items when you turn in; they are taken), `enter`
+(`cave`). Progress comes as `quest` events. Each quest has a giver role; when that role isn't in
+the room, the quartermaster gives it instead.
+
+| id | name | giver | needs | steps | reward | QP |
+|---|---|---|---|---|---|---|
+| `skitter_cull` | Pest Control | guard | — | kill 5 skitter | lamp, medkit | 1 |
+| `brick_drive` | Building Blocks | quartermaster | — | craft 5 brick | lamp, medkit | 1 |
+| `ice_run` | Thirsty Colony | miner | mining 15 | gather 5 ice | lamp, drill bit | 1 |
+| `core_samples` | Rock Solid | surveyor | — | deliver 3 sample | lamp, medkit | 1 |
+| `field_hospital` | Field Hospital | medic | fabrication 10 | deliver 2 water | lamp, 2 medkits | 1 |
+| `dust_to_dust` | Dust to Dust | guard | ranged 15 | kill 3 stalker | 2 lamps, chitin suit | 2 |
+| `heavy_metal` | Heavy Metal | guard | ranged 35 | kill 1 golem | 2 lamps, 5 void crystals | 2 |
+| `echoes` | Echoes Below | quartermaster | survey 40 | enter the cave → gather 1 ancient_relic → deliver 1 ancient_relic | 3 lamps, relic armour recipes | 3 |
+
+**Insight Lamp** (`xp_lamp`): `rub` it on a skill for `100 + 25 × level` XP in that skill.
+
+## Armour *(extra)*
+
+Gear slots: `helmet`, `suit`, `shield` (an energy shield generator) and `cape`, beside the weapon.
+`equip` an armour item to wear it (it swaps with what was in that slot); `unequip` with `gear`
+takes it off. Changes come as `gear` events, whose `bonus` is the total armour bonus.
+
+| item | slot | defence level | bonus |
+|---|---|---|---|
+| `chitin_helmet` | helmet | 1 | 6 |
+| `chitin_suit` | suit | 5 | 12 |
+| `iron_helmet` | helmet | 20 | 14 |
+| `iron_suit` | suit | 25 | 28 |
+| `void_shield` | shield | 40 | 25 |
+| `relic_helmet` | helmet | 60 | 24 |
+| `relic_suit` | suit | 60 | 48 |
+| `void_cape` | cape | 1 | 2 (a Rift Surge trophy) |
+
+The bonus goes into your defence roll (see Combat). Dying loses only the weapon; armour is kept.
+
+## Rift Surge *(extra)*
+
+While humans are on a surface site, a Rift Surge happens every 20–30 minutes of play:
+1. `event` with `phase: "warning"`, the spot (`tx`,`tz`, 15–35 tiles from spawn) and `ends_in`
+   (ticks; 200 = 2 minutes).
+2. `phase: "open"`: three waves of creatures, 20 ticks apart (skitters, then stalkers, then a golem).
+   They arrive with `npc_spawn` and attack anyone nearby, with no combat-level or one-at-a-time
+   limits. A few ticks after they die they are removed with `npc_despawn` instead of respawning.
+3. `phase: "boss"`: a Void Leviathan comes through. Colonist guards within 40 tiles join the fight.
+4. `phase: "ended"`. If the boss died, everyone who did at least 5% of its hp gets a loot roll:
+   3–8 void crystals, a 1/8 chance of the `rift_blade` and a 1/5 chance of the `void_cape`. The
+   boss gives no normal drop. If nobody kills it within 6 minutes, the rift collapses and takes the
+   creatures with it.
+
+`welcome.event` carries the current phase for players who arrive mid-surge. When the last human
+leaves, the surge is cleared, so it never keeps an empty room awake.
 
 ## Limits
 

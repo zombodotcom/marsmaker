@@ -158,10 +158,15 @@ async function main() {
   const until = t0 + SECS * 1000;
   for (const c of clients) for (const k of ["recv", "bytes", "sent"]) c.s[k] = 0;
   for (const c of clients) c.s.types = new Map();
+  const info = (s) => fetch(`${HTTP}/room/${s}/info`).then((r) => r.json()).catch(() => null);
+  const infos0 = await Promise.all(SITES.map(info));
+  let infosLate = [];
+  const late = setTimeout(async () => { infosLate = await Promise.all(SITES.map(info)); }, SECS * 1000 - 1500);
   const infosMid = [];
   const mid = setTimeout(async () => { for (const s of SITES) infosMid.push(await fetch(`${HTTP}/room/${s}/info`).then((r) => r.json()).catch(() => null)); }, (SECS * 1000) / 2);
   await Promise.all(clients.map((c) => c.run(until)));
   clearTimeout(mid);
+  clearTimeout(late);
   const secs = (Date.now() - t0) / 1000;
   const cpu1 = workerdCpu();
   await sleep(2500);
@@ -200,6 +205,12 @@ async function main() {
     const d = cpu1 - cpu0;
     console.log(`workerd CPU: ${d.toFixed(1)} s over ${secs.toFixed(0)} s wall (${((100 * d) / secs).toFixed(1)}% of one core), ` +
       `${((1000 * d) / Math.max(1, totalTicks)).toFixed(2)} ms per room-tick incl. socket I/O`);
+  }
+  // SQLite rows written while the run was steady (rooms report rows_written since they started)
+  const rows = SITES.map((_, i) => (infos0[i]?.rows_written != null && infosLate[i]?.rows_written != null ? infosLate[i].rows_written - infos0[i].rows_written : null));
+  if (rows.every((r) => r != null)) {
+    const span = (SECS - 1.5) / 3600;
+    console.log(`SQLite rows written: ${rows.map((r, i) => `room ${i} ${r} (${(r / span).toFixed(0)}/h, ${(r / span / (N / R)).toFixed(0)}/h per player)`).join(" | ")}`);
   }
   console.log(`rooms after the run: ${infosEnd.map((i) => (i ? `players ${i.players}, ticking ${i.ticking}, bots ${i.bots}` : "?")).join(" | ")}`);
   process.exit(0);
