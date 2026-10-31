@@ -58,11 +58,17 @@ pub struct UiMsg {
 pub struct Opt {
     pub label: String,
     pub act: UiAct,
+    /// the world thing this option is about (hover ring)
+    pub target: Option<super::pick::Target>,
 }
 
 impl Opt {
     pub fn new(label: String, act: UiAct) -> Self {
-        Opt { label, act }
+        Opt { label, act, target: None }
+    }
+    pub fn on(mut self, t: super::pick::Target) -> Self {
+        self.target = Some(t);
+        self
     }
 }
 
@@ -86,6 +92,10 @@ pub struct UiState {
     pub typing: Option<String>,
     pub name_entry: Option<String>,
     pub hover: String,
+    /// what a left click would act on right now (hover ring)
+    pub hover_target: Option<super::pick::Target>,
+    /// test runs: a pretend mouse position (the off-screen test window has no real cursor)
+    pub fake_cursor: Option<Vec2>,
     pub hello_sent: bool,
     pub cursor: Vec2,
     pub over_ui: bool,

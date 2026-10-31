@@ -14,6 +14,7 @@
 mod grid;
 mod look;
 mod net;
+mod pick;
 pub mod proto;
 mod sim;
 mod store;
@@ -59,6 +60,8 @@ impl Plugin for MmoPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Kit>()
             .init_resource::<UiState>()
+            .init_resource::<pick::PickRects>()
+            .init_resource::<pick::ClickTest>()
             .add_message::<UiMsg>()
             // runs in every mode: leaving MARSSCAPE for a driving mode must tear it down too
             .add_systems(Update, unload.before(start))
@@ -70,7 +73,10 @@ impl Plugin for MmoPlugin {
                     network,
                     script,
                     keys,
+                    pick::rects,
+                    pick::click_test,
                     world_input,
+                    pick::hover_ring,
                     ui_actions,
                     move_actors,
                     animate,
@@ -319,7 +325,7 @@ fn unload(
     mut ev: MessageReader<SiteUnloaded>,
     args: Res<Args>,
     scape: Option<Res<Scape>>,
-    ui_roots: Query<Entity, With<ui::ScapeUi>>,
+    ui_roots: Query<Entity, Or<(With<ui::ScapeUi>, With<look::HoverRing>)>>,
     mut st: ResMut<UiState>,
 ) {
     let unloaded = ev.read().count() > 0;
@@ -884,90 +890,89 @@ fn keys(keys: Res<ButtonInput<KeyCode>>, mut kb: MessageReader<bevy::input::keyb
     }
 }
 
-/// What's under the cursor, as menu options (first = left-click default).
-fn options_at(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, site: &Site) -> Vec<Opt> {
-    let (camera, gt) = cam;
-    let mut opts = Vec::new();
-    let mut best: Option<(f32, Vec<Opt>)> = None;
-    let mut consider = |pos: Vec3, h: f32, o: Vec<Opt>| {
-        let (Ok(top), Ok(bot)) = (camera.world_to_viewport(gt, pos + Vec3::Y * h), camera.world_to_viewport(gt, pos)) else { return };
-        let mid = (top + bot) * 0.5;
-        let r = ((top - bot).length() * 0.55).max(22.0);
-        let d = mid.distance(cursor);
-        if d < r && best.as_ref().is_none_or(|b| d < b.0) {
-            best = Some((d, o));
+/// The right-click options for one thing in the world (first = its left-click action).
+fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
+    use pick::Target;
+    match t {
+        Target::Npc(id) => {
+            let Some(a) = sc.npcs.get(&id) else { return Vec::new() };
+            let def = creature_def(&a.kind);
+            let name = def.map_or("Creature", |d| d.name);
+            let ex = def.map_or("", |d| d.examine);
+            vec![Opt::new(format!("Attack {name} (level {})", a.level), UiAct::Attack(id)).on(t), Opt::new(format!("Examine {name}"), UiAct::Say(ex.into())).on(t)]
         }
-    };
-    for (id, a) in &sc.npcs {
-        if a.anim == anim::DEAD {
-            continue;
+        Target::Player(id) => {
+            let Some(a) = sc.players.get(&id) else { return Vec::new() };
+            let ex = match a.role.as_deref() {
+                Some("guard") => format!("{}, colony guard. Say \"help\" and they'll watch your back.", a.name),
+                Some("medic") => format!("{}, the colony medic. Patches up anyone who's hurt.", a.name),
+                Some("quartermaster") => format!("{}, the quartermaster. Hands newcomers a starter kit.", a.name),
+                Some(r) => format!("{}, a colonist ({r}).", a.name),
+                None => format!("{}, a fellow astronaut.", a.name),
+            };
+            vec![Opt::new(format!("Examine {}", a.name), UiAct::Say(ex)).on(t)]
         }
-        let name = creature_def(&a.kind).map_or("Creature", |d| d.name);
-        let ex = creature_def(&a.kind).map_or("", |d| d.examine);
-        consider(a.pos, a.height, vec![Opt::new(format!("Attack {name} (level {})", a.level), UiAct::Attack(*id)), Opt::new(format!("Examine {name}"), UiAct::Say(ex.into()))]);
-    }
-    for (id, n) in &sc.nodes {
-        let name = node_name(&n.kind).to_string();
-        let mut o = Vec::new();
-        match n.kind.as_str() {
-            "fabricator" => o.push(Opt::new("Use Fabricator".into(), UiAct::Node(*id))),
-            "rift" => {}
-            k => {
-                if let Some(d) = node_def(k) {
-                    o.push(Opt::new(format!("{} {name}", d.verb), UiAct::Node(*id)));
+        Target::Node(id) => {
+            let Some(n) = sc.nodes.get(&id) else { return Vec::new() };
+            let name = node_name(&n.kind).to_string();
+            let mut o = Vec::new();
+            match n.kind.as_str() {
+                "fabricator" => o.push(Opt::new("Use Fabricator".into(), UiAct::Node(id)).on(t)),
+                "rift" => {}
+                k => {
+                    if let Some(d) = node_def(k) {
+                        o.push(Opt::new(format!("{} {name}", d.verb), UiAct::Node(id)).on(t));
+                    }
                 }
             }
+            let ex = match n.kind.as_str() {
+                "fabricator" => "Turns raw materials into useful things.",
+                "rift" => "A tear into the void. Stars where the ground should be, and things crawling out.",
+                k => node_def(k).map_or("", |d| d.examine),
+            };
+            o.push(Opt::new(format!("Examine {name}"), UiAct::Say(ex.into())).on(t));
+            o
         }
-        let ex = match n.kind.as_str() {
-            "fabricator" => "Turns raw materials into useful things.",
-            "rift" => "A tear into the void. Stars where the ground should be, and things crawling out.",
-            k => node_def(k).map_or("", |d| d.examine),
-        };
-        o.push(Opt::new(format!("Examine {name}"), UiAct::Say(ex.into())));
-        let h = if n.kind == "fabricator" { 2.0 } else { 1.0 };
-        consider(n.pos, h, o);
     }
-    if let Some((_, o)) = best {
-        opts.extend(o);
+}
+
+/// What's under the cursor, as menu options (first = left-click default): every thing under it
+/// (best first, see `pick::under`), then "Walk here", then astronauts (clicking a person walks
+/// there, like stepping up to them), then Cancel.
+fn options_at(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, site: &Site, pr: &pick::PickRects) -> Vec<Opt> {
+    let (camera, gt) = cam;
+    let mut opts = Vec::new();
+    let mut people = Vec::new();
+    for t in pick::under(pr, sc, cursor, cam, site) {
+        let o = target_options(sc, t);
+        if matches!(t, pick::Target::Player(_)) {
+            people.extend(o);
+        } else {
+            opts.extend(o);
+        }
     }
     if let Ok(ray) = camera.viewport_to_world(gt, cursor) {
-        if let Some(p) = ray_ground(site, ray) {
-            let t = tile_of(p.x, p.z);
-            opts.push(Opt::new("Walk here".into(), UiAct::Walk(t)));
+        if let Some(p) = pick::ray_ground(site, ray) {
+            opts.push(Opt::new("Walk here".into(), UiAct::Walk(tile_of(p.x, p.z))));
         }
     }
+    opts.extend(people);
     opts.push(Opt::new("Cancel".into(), UiAct::Cancel));
     opts
 }
 
-fn ray_ground(site: &Site, ray: Ray3d) -> Option<Vec3> {
-    let mut t = 0.0f32;
-    let mut prev = 0.0;
-    for _ in 0..1500 {
-        let step = 0.25 + t * 0.01;
-        t += step;
-        if t > 1500.0 {
-            return None;
-        }
-        let p = ray.get_point(t);
-        if let Some(h) = site.height(p.x, p.z) {
-            if p.y <= h {
-                let (mut a, mut b) = (prev, t);
-                for _ in 0..12 {
-                    let m = 0.5 * (a + b);
-                    let q = ray.get_point(m);
-                    if site.height(q.x, q.z).is_some_and(|h| q.y <= h) {
-                        b = m;
-                    } else {
-                        a = m;
-                    }
-                }
-                return Some(ray.get_point(b));
-            }
-        }
-        prev = t;
+/// What a plain left click at `cursor` would do (clicktest).
+fn left_pick(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, site: &Site, pr: &pick::PickRects) -> pick::Picked {
+    use pick::Picked;
+    match options_at(sc, cam, cursor, site, pr).first() {
+        Some(Opt { target: Some(t), .. }) => Picked::T(*t),
+        Some(Opt { act: UiAct::Walk(_), .. }) => Picked::Ground,
+        _ => Picked::Nothing,
     }
-    None
+}
+
+fn ground_pick(site: &Site, ray: Ray3d) -> Option<Vec3> {
+    pick::ray_ground(site, ray)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -981,10 +986,12 @@ fn world_input(
     nodes: Query<(), With<Node>>,
     win: Query<&Window, With<PrimaryWindow>>,
     cam: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    pr: Res<pick::PickRects>,
     mut st: ResMut<UiState>,
     mut out: MessageWriter<UiMsg>,
 ) {
     let (Some(sc), Some(site)) = (scape, site) else { return };
+    st.hover_target = None;
     if menu.is_some_and(|m| m.open) || st.name_entry.is_some() {
         st.hover.clear();
         return;
@@ -1006,14 +1013,15 @@ fn world_input(
             }
         };
         if let Some(p) = at {
-            let opts = options_at(&sc, cam, p, &site);
+            let opts = options_at(&sc, cam, p, &site, &pr);
             st.hover = opts.first().map(|o| o.label.clone()).unwrap_or_default();
+            st.hover_target = opts.first().and_then(|o| o.target);
             st.ctx = Some(CtxMenu { at: p, opts });
         }
         return;
     }
     let Ok(w) = win.single() else { return };
-    let Some(cursor) = w.cursor_position() else {
+    let Some(cursor) = w.cursor_position().or(st.fake_cursor) else {
         st.over_ui = false;
         if st.ctx.is_none() {
             st.hover.clear();
@@ -1037,7 +1045,8 @@ fn world_input(
         }
         return;
     }
-    let opts = options_at(&sc, cam, cursor, &site);
+    let opts = options_at(&sc, cam, cursor, &site, &pr);
+    st.hover_target = opts.first().and_then(|o| o.target);
     let n = opts.len().saturating_sub(1);
     st.hover = match opts.first() {
         Some(o) if o.act != UiAct::Cancel => {
@@ -1359,6 +1368,11 @@ fn effects(
 /// `chat:TEXT`, `type:TEXT` (open the chat line with TEXT, unsent), `ctx` (right-click menu at
 /// the screen centre), `rotate:DEG`, `pitch:DEG`, `zoom:M`, `run:on|off`, `give:ITEM` (offline
 /// only, cheat for tests), `xp:SKILL:XP` (offline cheat), `log`, `shot:FILE.png`, `quit`.
+/// Clicking (pick.rs), on the nearest drawn thing of a KIND (node / creature kind, `colonist`,
+/// `player`): `click:KIND` (left click through the real picking), `hover:KIND` / `unhover` (pretend
+/// cursor), `ctxon:KIND` (right-click menu on it), `ctxoverlap` (menu where two things overlap),
+/// `report:KIND` (log its screen position, for tools/web_click.mjs), `logpick` (log what's under
+/// the cursor), `clicktest:LABEL` (measure picking from this camera, see `pick::click_test`).
 #[derive(Resource)]
 struct ScriptRun {
     steps: Vec<(String, String, f32)>,
@@ -1410,6 +1424,7 @@ fn script(
     mut st: ResMut<UiState>,
     mut orbit: Option<ResMut<Orbit>>,
     win: Query<&Window, With<PrimaryWindow>>,
+    (pr, site, cam): (Res<pick::PickRects>, Option<Res<Site>>, Query<(&Camera, &GlobalTransform), With<Camera3d>>),
     mut out: MessageWriter<UiMsg>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -1516,6 +1531,75 @@ fn script(
             }
         }
         "noctx" => st.ctx = None,
+        "unhover" => st.fake_cursor = None,
+        "ctxoverlap" => {
+            // right-click where two drawn things overlap (shows the menu listing both)
+            let sh = &pr.shown;
+            let mut at = None;
+            'outer: for (i, a) in sh.iter().enumerate() {
+                for b in &sh[i + 1..] {
+                    let (lo, hi) = (a.min.max(b.min), a.max.min(b.max));
+                    let c = (lo + hi) * 0.5;
+                    if hi.x - lo.x > 6.0 && hi.y - lo.y > 6.0 && c.x > 60.0 && c.y > 60.0 && c.x < 1000.0 && c.y < 500.0 {
+                        at = Some(c);
+                        break 'outer;
+                    }
+                }
+            }
+            match at {
+                Some(c) => st.ctx_request = Some(ui::CtxReq::At(c)),
+                None => warn!("mmo-script: nothing overlapping on screen"),
+            }
+        }
+        "logpick" => {
+            let wi = win.single().map(|w| format!("{}x{} logical, scale {}, {}x{} px", w.width(), w.height(), w.scale_factor(), w.physical_width(), w.physical_height())).unwrap_or_default();
+            info!("mmo-pick cursor={:?} hover='{}' target={:?} window={wi}", st.cursor, st.hover, st.hover_target);
+        }
+        "click" | "hover" | "ctxon" | "report" => {
+            // a left click on the middle of the nearest drawn thing of a kind (creature kinds, node
+            // kinds, "colonist"), through the same picking a real click uses
+            let mp = sc.my_pos().unwrap_or_default();
+            let kind_of = |t: pick::Target| match t {
+                pick::Target::Npc(id) => sc.npcs.get(&id).map(|a| a.kind.clone()),
+                pick::Target::Player(id) => sc.players.get(&id).map(|a| if a.role.is_some() { "colonist".into() } else { "player".into() }),
+                pick::Target::Node(id) => sc.nodes.get(&id).map(|n| n.kind.clone()),
+            };
+            let visible = |s: &&pick::Shown| match (site.as_ref(), cam.single()) {
+                (Some(site), Ok((c, g))) => !s.hidden(c, g, site),
+                _ => true,
+            };
+            let best = pr.shown.iter().filter(|s| kind_of(s.target).as_deref() == Some(arg.as_str())).filter(visible).min_by(|a, b| a.base.distance_squared(mp).total_cmp(&b.base.distance_squared(mp)));
+            if cmd == "report" {
+                // where it is on screen (logical px = CSS px in the browser), for outside drivers
+                match best {
+                    Some(s) => info!("mmo-report {arg} {:.1} {:.1} {:?}", s.centre().x, s.centre().y, s.target),
+                    None => warn!("mmo-script: no {arg} on screen to report"),
+                }
+                return;
+            }
+            if cmd == "ctxon" {
+                // right-click on the middle of it
+                st.ctx_request = best.map(|s| ui::CtxReq::At(s.centre()));
+                return;
+            }
+            if cmd == "hover" {
+                st.fake_cursor = best.map(|s| s.centre());
+                if best.is_none() {
+                    warn!("mmo-script: no {arg} on screen to hover");
+                }
+                return;
+            }
+            match (best, site.as_ref(), cam.single()) {
+                (Some(s), Some(site), Ok(cam)) => {
+                    let opts = options_at(&sc, cam, s.centre(), site, &pr);
+                    let o = opts.into_iter().next().expect("Cancel is always there");
+                    info!("mmo-script: click {arg} at {:?} -> {} (wanted {:?}, got {:?})", s.centre(), o.label, s.target, o.target);
+                    out.write(UiMsg { act: o.act, alt: false });
+                }
+                _ => warn!("mmo-script: no {arg} on screen to click"),
+            }
+        }
+        "clicktest" => commands.insert_resource(pick::ClickTest(Some(if arg.is_empty() { format!("step{}", run.i - 1) } else { arg.clone() }))),
         "rotate" => {
             if let Some(o) = orbit.as_mut() {
                 o.yaw = arg.parse::<f32>().unwrap_or(0.0).to_radians();

@@ -100,8 +100,8 @@ the void.
 
 | Key | Action |
 | --- | --- |
-| Left-click | walk there / mine / survey / use / attack (the top-left text says what) |
-| Right-click | all options (examine, walk here, ...) |
+| Left-click | walk there / mine / survey / use / attack (the top-left text and a ring under the thing say what) |
+| Right-click | all options for everything under the cursor (examine, walk here, ...) |
 | Arrows, middle-drag | turn the camera; mouse wheel zooms; the N button faces north |
 | R or the orb | walk / run (run = 2 tiles a tick); Shift+click runs once |
 | Enter | type in chat, Enter sends |
@@ -110,6 +110,15 @@ the void.
 
 Test hook: `--mmo-name NAME --mmo-script "wait:2,walk:6,3,act:regolith@8,tab:skills,shot:a.png,quit"`
 (steps in `mmo/mod.rs`, `ScriptRun`). With `--mmo-name` the run never reads or stores a login token.
+
+Clicking goes by what's drawn: each rock, creature and astronaut gets a screen rectangle from its
+meshes' bounds at its current (moving) position, with a few pixels of slack for small or far ones
+(`mmo/pick.rs`). Inside beats near; creatures beat astronauts beat rocks and stations, rifts
+last; the one in front wins a tie. A left click on an astronaut walks up to them (Examine is in
+the right-click menu). `clicktest:LABEL` in a script measures it from the current camera: for every
+thing on screen it tries the centre, points inside, +-10 px and +-20 px, clicks just outside it and
+on open ground, and logs the hit rates (`mmo-clicktest` lines). `tools/web_click.mjs` does real
+mouse moves and clicks in headless Chrome at a chosen device pixel ratio.
 
 ## Controls
 

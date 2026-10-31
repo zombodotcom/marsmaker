@@ -5,6 +5,7 @@
 //! and don't add shader compiles in the browser.
 
 use super::proto::anim;
+use crate::visuals::Fx;
 use bevy::prelude::*;
 use std::collections::HashMap;
 
@@ -574,6 +575,19 @@ pub fn marker(cx: &mut Ctx, at: Vec3, red: bool) -> Entity {
         .id()
 }
 
+/// Ring on the ground under whatever a left click would act on (one entity, moved every frame).
+#[derive(Component)]
+pub struct HoverRing {
+    /// yellow (things), red (creatures), white (astronauts)
+    pub mats: [Handle<StandardMaterial>; 3],
+}
+
+pub fn hover_ring(cx: &mut Ctx) -> Entity {
+    let mesh = cx.m("hover_ring", || lowpoly(Torus::new(0.72, 1.0).mesh().minor_resolution(6).major_resolution(32)));
+    let mats = [cx.glow([1.0, 0.85, 0.15], 2.5), cx.glow([1.0, 0.18, 0.1], 2.5), cx.glow([0.9, 0.95, 1.0], 2.0)];
+    cx.commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats[0].clone()), Transform::default(), Visibility::Hidden, HoverRing { mats }, Fx)).id()
+}
+
 /// Bullet tracer or plasma bolt flying from `a` to `b`.
 #[derive(Component)]
 pub struct Shot {
@@ -589,7 +603,7 @@ pub fn shot(cx: &mut Ctx, a: Vec3, b: Vec3, plasma: bool) -> Entity {
     } else {
         (cx.m("s_tracer", || Cuboid::new(0.04, 0.04, 0.9).into()), cx.glow([1.0, 0.85, 0.3], 10.0), 0.14)
     };
-    cx.commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::from_translation(a).looking_at(b, Vec3::Y), Shot { a, b, t: 0.0, dur })).id()
+    cx.commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::from_translation(a).looking_at(b, Vec3::Y), Shot { a, b, t: 0.0, dur }, Fx)).id()
 }
 
 /// Short-lived muzzle flash.
@@ -599,7 +613,7 @@ pub struct Flash(pub f32);
 pub fn flash(cx: &mut Ctx, at: Vec3) -> Entity {
     let m = cx.m("s_flash", || lowpoly(Sphere::new(0.12).mesh().ico(0).unwrap()));
     let mat = cx.glow([1.0, 0.8, 0.4], 12.0);
-    cx.commands.spawn((Mesh3d(m), MeshMaterial3d(mat), Transform::from_translation(at), Flash(0.0))).id()
+    cx.commands.spawn((Mesh3d(m), MeshMaterial3d(mat), Transform::from_translation(at), Flash(0.0), Fx)).id()
 }
 
 /// Pose one rig's parts for its animation at `phase`.
