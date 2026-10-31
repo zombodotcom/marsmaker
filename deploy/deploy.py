@@ -92,7 +92,8 @@ OVERLAY = r"""
       if (/[?&](mode=(scape|marsscape|mmo)|mmo)(&|=|$)/.test(location.search)) {
         help.innerHTML = '<b>MarsScape</b><br><kbd>Left-click</kbd> walk / mine / attack &nbsp;<kbd>Right-click</kbd> options<br>' +
           '<kbd>&larr;</kbd><kbd>&rarr;</kbd> or middle-drag: camera &nbsp; wheel: zoom &nbsp;<kbd>R</kbd> run<br>' +
-          '<kbd>Enter</kbd> chat (say <i>help</i> for a guard escort) &nbsp;<kbd>Esc</kbd> menu';
+          '<kbd>Enter</kbd> chat (say <i>help</i> for a guard escort) &nbsp;<kbd>Esc</kbd> menu<br>' +
+          'Click colonists for quests. The pit near the landing site goes down into a lava tube.';
         document.getElementById('mm-touch').remove();
       }
     })();
