@@ -212,6 +212,17 @@ async function main() {
   const val = await a.wait((m) => m.t === "value", 3000);
   check(!!val && val.buy > 40 && val.sell > 0 && val.sell < val.buy, `value: medkit buy ${val?.buy}, sell ${val?.sell}`);
 
+  // talking to her offers the shop
+  await sleep(450);
+  a.send({ t: "talk", id: trader.id });
+  const hello = await a.wait((m) => m.t === "dialog", 20000);
+  check(!!hello && hello.role === "trader" && hello.options.some((o) => o.id === "shop"), "talking to the trader offers \"Let's trade.\"");
+  a.send({ t: "dialog_choose", option: "shop" });
+  const viaTalk = await a.wait((m) => m.t === "shop", 5000);
+  check(!!viaTalk, "choosing it opens the shop");
+  a.send({ t: "shop_close" });
+  await a.wait((m) => m.t === "shop_end", 2000);
+
   // walk away, then shop_open walks us over
   await a.walkTo(stall.tx + 12, stall.tz + 12, 0);
   let shop = await openShop(a);

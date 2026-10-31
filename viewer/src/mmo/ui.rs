@@ -1,5 +1,5 @@
 //! MarsScape HUD (bevy_ui): chat box, side panel (inventory / skills / gear / quest tabs), minimap
-//! with compass, hitpoints and run orbs, fabricator / locker / trade / lamp panels, colonist dialog,
+//! with compass, hitpoints and run orbs, fabricator / locker / shop / trade / lamp panels, colonist dialog,
 //! the Rift Surge banner, right-click menu, name prompt, and the world-anchored overlays (name tags,
 //! health bars, hitsplats) plus XP drops.
 //! Chunky dark-brown panels with rust borders: old-school in spirit, all original.
@@ -62,6 +62,27 @@ pub enum UiAct {
     Rub(Skill),
     CloseLamp,
     UnequipGear(&'static str),
+    /// the trader (colonist id): open her shop
+    ShopOpen(u32),
+    /// buy from shelf entry `idx`
+    Buy(usize, Qty),
+    /// sell from a pack slot
+    Sell(usize, Qty),
+    Buyback(usize),
+    /// 0 = buy, 1 = buyback
+    ShopTab(u8),
+    CloseShop,
+    /// what the trader would charge / pay for one
+    Value(String),
+    /// ask for an amount ("X") in the chat line
+    Amount(AmountFor),
+}
+
+/// What an "X" amount prompt will do with the number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AmountFor {
+    Buy(usize),
+    Sell(usize),
 }
 
 #[derive(Message, Clone, Debug)]
@@ -116,6 +137,8 @@ pub struct UiState {
     pub hello_sent: bool,
     pub cursor: Vec2,
     pub over_ui: bool,
+    /// typing an amount for a buy / sell ("X"): what for, digits so far
+    pub amount: Option<(AmountFor, String)>,
 }
 
 #[derive(Component)]
@@ -399,6 +422,35 @@ pub fn move_options(slot: usize, item: &str, verb: &'static str) -> Vec<Opt> {
     v
 }
 
+/// A pack item while the shop is open: left-click sells one.
+pub fn sell_options(slot: usize, item: &str) -> Vec<Opt> {
+    let name = item_name(item);
+    vec![
+        Opt::new(format!("Sell-1 {name}"), UiAct::Sell(slot, Qty::N(1))),
+        Opt::new(format!("Value {name}"), UiAct::Value(item.to_string())),
+        Opt::new(format!("Sell-5 {name}"), UiAct::Sell(slot, Qty::N(5))),
+        Opt::new(format!("Sell-10 {name}"), UiAct::Sell(slot, Qty::N(10))),
+        Opt::new(format!("Sell-X {name}"), UiAct::Amount(AmountFor::Sell(slot))),
+        Opt::new(format!("Sell-All {name}"), UiAct::Sell(slot, Qty::All)),
+        Opt::new(format!("Examine {name}"), UiAct::Item(slot, "examine")),
+        Opt::new("Cancel".into(), UiAct::Cancel),
+    ]
+}
+
+/// A shelf entry in the shop: left-click buys one.
+pub fn buy_options(idx: usize, item: &str) -> Vec<Opt> {
+    let name = item_name(item);
+    vec![
+        Opt::new(format!("Value {name}"), UiAct::Value(item.to_string())),
+        Opt::new(format!("Buy-1 {name}"), UiAct::Buy(idx, Qty::N(1))),
+        Opt::new(format!("Buy-5 {name}"), UiAct::Buy(idx, Qty::N(5))),
+        Opt::new(format!("Buy-10 {name}"), UiAct::Buy(idx, Qty::N(10))),
+        Opt::new(format!("Buy-X {name}"), UiAct::Amount(AmountFor::Buy(idx))),
+        Opt::new(format!("Examine {name}"), UiAct::Say(item_examine(item).to_string())),
+        Opt::new("Cancel".into(), UiAct::Cancel),
+    ]
+}
+
 pub fn withdraw_options(idx: usize, item: &str) -> Vec<Opt> {
     let name = item_name(item);
     vec![
@@ -415,19 +467,34 @@ fn rgb(c: [f32; 3]) -> Color {
 
 fn side_pack(p: &mut ChildSpawnerCommands, sc: &Scape) {
     p.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::flex(4, 1.0), column_gap: Val::Px(3.0), row_gap: Val::Px(3.0), ..default() }).with_children(|g| {
+        // taller cells while the shop is open: they show her offer too
+        let h = if sc.shop.is_some() { 50.0 } else { 40.0 };
         for (i, s) in sc.inv.iter().enumerate().take(INV_SLOTS) {
-            let e = button(g, UiAct::Slot(i), Node { height: Val::Px(40.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::Center, row_gap: Val::Px(1.0), ..default() }, INSET);
+            let e = button(g, UiAct::Slot(i), Node { height: Val::Px(h), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::Center, row_gap: Val::Px(1.0), ..default() }, INSET);
             if let Some(s) = s {
                 let c = rgb(item_color(&s.item));
                 g.commands().entity(e).with_children(|b| {
                     b.spawn((Node { width: Val::Px(16.0), height: Val::Px(12.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(c), BorderColor::all(Color::BLACK), Pickable::IGNORE));
                     let l = if s.qty > 1 { format!("{} x{}", short(&s.item), s.qty) } else { short(&s.item).to_string() };
                     b.spawn(text(l, 11.0, TEXT));
+                    // with the shop open: what she'd pay for one
+                    if let Some(shop) = &sc.shop {
+                        match shop.sell.get(&s.item).copied().unwrap_or(0) {
+                            _ if s.item == "credits" => {}
+                            0 => {
+                                b.spawn(text("won't buy", 9.0, BAD));
+                            }
+                            v => {
+                                b.spawn(text(format!("{v}c"), 10.0, GOLD));
+                            }
+                        }
+                    }
                 });
             }
         }
     });
-    p.spawn(text("Click an item to use it, right-click for options.", 11.0, DIM)).insert(Node { margin: UiRect::top(Val::Px(4.0)), ..default() });
+    let hint = if sc.shop.is_some() { "Click an item to sell one, right-click for more (Value, 5, 10, X, All)." } else { "Click an item to use it, right-click for options." };
+    p.spawn(text(hint, 11.0, DIM)).insert(Node { margin: UiRect::top(Val::Px(4.0)), ..default() });
 }
 
 fn side_skills(p: &mut ChildSpawnerCommands, sc: &Scape) {
@@ -557,6 +624,74 @@ fn bank_panel(p: &mut ChildSpawnerCommands, items: &[Slot]) {
             item_grid(f, items, 8, |i| Some(UiAct::Withdraw(i, Qty::N(1))));
         }
         f.spawn(text("Click to take one out, right-click for more. Click your pack to put things in. Everything stacks in here.", 11.0, DIM));
+    });
+}
+
+/// Thousands separators: 12,345.
+fn credits_fmt(n: u32) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The trader's window: her shelf (or your buyback list) with prices; your pack on the right sells.
+fn shop_panel(p: &mut ChildSpawnerCommands, s: &super::ShopView) {
+    p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(12.0)), row_gap: Val::Px(6.0), width: Val::Px(500.0), max_width: Val::Percent(96.0), ..default() }))).with_children(|f| {
+        f.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() }).with_children(|h| {
+            h.spawn(text(format!("{}'s Trading Post", s.name), 20.0, GOLD));
+            h.spawn(Node { column_gap: Val::Px(10.0), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                r.spawn((Node { width: Val::Px(14.0), height: Val::Px(14.0), border: UiRect::all(Val::Px(1.0)), border_radius: BorderRadius::all(Val::Px(7.0)), ..default() }, BackgroundColor(rgb(item_color("credits"))), BorderColor::all(Color::BLACK)));
+                r.spawn(text(format!("{} credits", credits_fmt(s.credits)), 15.0, GOLD));
+                label_button(r, "Close", UiAct::CloseShop, 14.0);
+            });
+        });
+        // tabs: buy / buyback
+        f.spawn(Node { column_gap: Val::Px(4.0), ..default() }).with_children(|t| {
+            for (i, l) in [(0u8, "Buy".to_string()), (1, format!("Buyback ({})", s.buyback.len()))] {
+                let e = button(t, UiAct::ShopTab(i), Node { padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)), ..default() }, if s.tab == i { EDGE } else { INSET });
+                t.commands().entity(e).with_children(|b| {
+                    b.spawn(text(l, 14.0, if s.tab == i { TEXT } else { DIM }));
+                });
+            }
+        });
+        if s.tab == 0 {
+            f.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(7, 62.0), column_gap: Val::Px(4.0), row_gap: Val::Px(4.0), ..default() }).with_children(|g| {
+                for (i, it) in s.stock.iter().enumerate() {
+                    let out = it.qty == 0;
+                    let node = Node { height: Val::Px(62.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::Center, row_gap: Val::Px(1.0), ..default() };
+                    let e = button(g, UiAct::Buy(i, Qty::N(1)), node, INSET);
+                    g.commands().entity(e).with_children(|b| {
+                        let c = rgb(item_color(&it.item));
+                        b.spawn((Node { width: Val::Px(18.0), height: Val::Px(13.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(if out { c.with_alpha(0.3) } else { c }), BorderColor::all(Color::BLACK), Pickable::IGNORE));
+                        b.spawn(text(short(&it.item), 10.0, if out { DIM } else { TEXT }));
+                        b.spawn(text(if out { "sold out".to_string() } else { format!("x{}", it.qty) }, 10.0, DIM));
+                        b.spawn(text(if out { " ".to_string() } else { format!("{}c", credits_fmt(it.price)) }, 11.0, if out { DIM } else if it.price > s.credits { BAD } else { GOLD }));
+                    });
+                }
+            });
+            f.spawn(text("Click to buy one, right-click for Value / 5 / 10 / X. Prices rise as her stock runs low.", 11.0, DIM));
+        } else if s.buyback.is_empty() {
+            f.spawn(text("Nothing to buy back. Things you sell show up here for 30 minutes.", 13.0, DIM));
+        } else {
+            for (i, b) in s.buyback.iter().enumerate() {
+                f.spawn((Node { align_items: AlignItems::Center, column_gap: Val::Px(8.0), padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)), ..default() }, BackgroundColor(INSET))).with_children(|r| {
+                    r.spawn((Node { width: Val::Px(14.0), height: Val::Px(12.0), flex_shrink: 0.0, ..default() }, BackgroundColor(rgb(item_color(&b.item)))));
+                    let what = if b.qty > 1 { format!("{} x {}", b.qty, item_name(&b.item)) } else { item_name(&b.item).to_string() };
+                    r.spawn(Node { flex_direction: FlexDirection::Column, flex_grow: 1.0, ..default() }).with_children(|c| {
+                        c.spawn(text(what, 13.0, TEXT));
+                        c.spawn(text(format!("sold for {} credits, {} min left", credits_fmt(b.price), b.expires_in.div_ceil(60)), 10.0, DIM));
+                    });
+                    label_button(r, &format!("Buy back {}c", credits_fmt(b.price)), UiAct::Buyback(i), 12.0);
+                });
+            }
+            f.spawn(text("Buy back what you sold for exactly what she paid you.", 11.0, DIM));
+        }
     });
 }
 
@@ -745,9 +880,10 @@ pub fn refresh(
             c.0 = col;
         }
         if let Ok(mut t) = input.single_mut() {
-            t.0 = match &st.typing {
-                Some(s) => format!("{}: {s}*", sc.name),
-                None => "Press Enter to chat".into(),
+            t.0 = match (&st.amount, &st.typing) {
+                (Some((_, d)), _) => format!("Enter amount: {d}*"),
+                (_, Some(s)) => format!("{}: {s}*", sc.name),
+                _ => "Press Enter to chat".into(),
             };
         }
     }
@@ -819,6 +955,8 @@ pub fn refresh(
             }
             if let Some(t) = &sc.trade {
                 commands.entity(root).with_children(|p| trade_panel(p, t));
+            } else if let Some(s) = &sc.shop {
+                commands.entity(root).with_children(|p| shop_panel(p, s));
             } else if let Some(b) = &sc.bank {
                 commands.entity(root).with_children(|p| bank_panel(p, b));
             } else if sc.lamp.is_some() {

@@ -104,6 +104,13 @@ the void.
   to put things in, click the locker to take them out (right-click for 5 / all).
 - **Trading**: right-click another player, *Trade with*. Both offer items, accept, then accept again
   on the confirm screen. Any change resets both accepts.
+- **The trader**: a colonist at a striped stall next to the fabricator. Left-click her (or the
+  stall) to open her shop. Credits come from the starter kit (100), every creature you kill and
+  some quests. Click a shelf item to buy one, right-click for Value / 5 / 10 / X (type the amount,
+  Enter). With the shop open your pack shows what she'd pay, and a click sells one (right-click:
+  Value / 5 / 10 / X / All). The Buyback tab sells your last 10 sales back at exactly what she paid,
+  for 30 minutes. Prices follow her stock (`mmo/proto.rs`, `buy_price` / `sell_price`); she never
+  pays as much as she charges. The offline world runs the same shop (`mmo/shop.rs`).
 - **Quests**: left-click a colonist to talk. Eight jobs (kill, gather, make, deliver), one of them a
   three-step story down the lava tube. Rewards: quest points, items, Insight Lamps (rub one on a
   skill for XP) and the relic armour plans. Quest tab (F4) shows progress.
@@ -130,6 +137,8 @@ Test hook: `--mmo-name NAME --mmo-script "wait:2,walk:6,3,act:regolith@8,tab:ski
 Steps for the newer features: `talk:ROLE`, `choose:ID|N`, `bank`, `deposit:SLOT[:all]`,
 `withdraw:IDX`, `pit`, `ladder`, `wear:SLOT`, `unwear:helmet`, `lamp:SLOT`, `rub:SLOT:SKILL`,
 `trade` (ask the nearest player), `offer:SLOT`, `accept`, `decline`, `surge:now|boss` (offline),
+`shop`, `shopbuy:IDX[:N|all]`, `shopsell:SLOT[:N|all]`, `buyback:IDX`, `shoptab:0|1`, `closeshop`,
+`value:ITEM`, `buyctx:IDX` / `sellctx:SLOT` (their right-click menus), `give:ITEM*N` (offline),
 `tab:quests`, `log`. `tools/mmo_partner.mjs` is a scripted second player for trade tests.
 
 Clicking goes by what's drawn: each rock, creature and astronaut gets a screen rectangle from its

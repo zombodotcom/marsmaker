@@ -527,6 +527,45 @@ pub fn node(cx: &mut Ctx, kind: &str, at: Vec3, seed: u32) -> Entity {
                 p.spawn((PointLight { color: Color::srgb(1.0, 0.75, 0.35), intensity: 25_000.0, range: 5.0, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, 1.0, 0.0)));
             });
         }
+        "stall" => {
+            // the trader's stall: a counter piled with goods under a striped awning. Faces +z,
+            // where she stands, so it isn't turned by the seed like the rocks.
+            cx.commands.entity(root).insert(Transform::from_translation(at));
+            let metal = cx.shiny([0.50, 0.52, 0.56]);
+            let dark = cx.c([0.22, 0.20, 0.20]);
+            let cloth_a = cx.c([0.85, 0.42, 0.16]);
+            let cloth_b = cx.c([0.42, 0.22, 0.62]);
+            let lamp = cx.glow([1.0, 0.78, 0.35], 5.0);
+            let counter = cx.m("st_counter", || lowpoly(Cuboid::new(1.8, 0.85, 0.8)));
+            let top = cx.m("st_top", || lowpoly(Cuboid::new(1.95, 0.08, 0.95)));
+            let post = cx.m("st_post", || lowpoly(Cuboid::new(0.08, 2.3, 0.08)));
+            let stripe = cx.m("st_stripe", || lowpoly(Cuboid::new(0.33, 0.05, 1.5)));
+            let crate_m = cx.m("st_crate", || lowpoly(Cuboid::new(0.32, 0.26, 0.3)));
+            let bulb = cx.m("st_bulb", || Sphere::new(0.09).mesh().ico(1).unwrap());
+            let goods = [[0.92, 0.92, 0.92], [0.35, 0.60, 0.95], [0.72, 0.42, 0.28], [0.62, 0.35, 1.0], [1.0, 0.80, 0.30]];
+            let goods: Vec<_> = goods.iter().map(|c| cx.c(*c)).collect();
+            cx.commands.entity(root).with_children(|p| {
+                piece(p, counter, dark.clone(), Transform::from_xyz(0.0, 0.42, 0.0));
+                piece(p, top, metal.clone(), Transform::from_xyz(0.0, 0.88, 0.0));
+                for (i, g) in goods.iter().enumerate() {
+                    let x = -0.7 + i as f32 * 0.35;
+                    piece(p, crate_m.clone(), g.clone(), Transform::from_xyz(x, 1.05, -0.12 + (i % 2) as f32 * 0.2).with_rotation(Quat::from_rotation_y(i as f32 * 0.4)));
+                }
+                for x in [-0.92f32, 0.92] {
+                    for z in [-0.42f32, 0.42] {
+                        piece(p, post.clone(), metal.clone(), Transform::from_xyz(x, 1.15, z));
+                    }
+                }
+                // the awning: alternating stripes, tilted down toward the customers (-z)
+                for i in 0..6 {
+                    let m = if i % 2 == 0 { cloth_a.clone() } else { cloth_b.clone() };
+                    piece(p, stripe.clone(), m, Transform::from_xyz(-0.83 + i as f32 * 0.333, 2.3, -0.1).with_rotation(Quat::from_rotation_x(-0.22)));
+                }
+                piece(p, bulb, lamp, Transform::from_xyz(0.0, 2.1, -0.3));
+                p.spawn((PointLight { color: Color::srgb(1.0, 0.8, 0.45), intensity: 20_000.0, range: 6.0, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, 1.9, -0.6)));
+            });
+            return root;
+        }
         "locker" => {
             let body = cx.shiny([0.52, 0.55, 0.60]);
             let dark = cx.c([0.20, 0.21, 0.24]);

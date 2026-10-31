@@ -467,7 +467,7 @@ export class Colony {
     this.markGifted(h.token);
     r.send(h.ws, { t: "inv", inv: h.inv });
     r.send(h.ws, { t: "msg", text: `${c.p.name} hands you a starter kit: 3 regolith bricks, a medkit and ${KIT_CREDITS} credits.` });
-    this.say(c, `There you go, ${h.name}. Bricks to build with, a medkit for emergencies, and a few credits for the trader.`);
+    this.say(c, `There you go, ${h.name}. Bricks, a medkit, and credits for the trader.`);
   }
 
   /** Miners gather ore and turn it into bricks/water/plates; surveyors pull core samples. */

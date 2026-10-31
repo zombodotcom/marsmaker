@@ -164,6 +164,10 @@ export function talk(room: Room, p: Player, c: Player, role: Role, roles: Set<Ro
     p.dialog = { npc: c.id, quest, opts: options.map((o) => o.id) };
     room.send(p.ws, { t: "dialog", npc: c.id, name: c.name, role, text, quest, options });
   };
+  if (role === "trader") {
+    return say("Credits for chitin, credits for crystals. I buy almost anything and sell what a colonist needs. Want a look?", null,
+      [{ id: "shop", text: "Let's trade." }, { id: "bye", text: "Not now." }]);
+  }
   const turnIn = mine.find((q) => ready(room, p, q));
   if (turnIn) {
     return say(`Is that it? ${turnIn.name}, all done?`, turnIn.id, [{ id: "turn_in", text: "Here you go." }, { id: "bye", text: "Not yet." }]);
@@ -205,6 +209,7 @@ export function choose(room: Room, p: Player, option: string) {
     return room.send(p.ws, { t: "dialog_end" });
   }
   room.send(p.ws, { t: "dialog_end" });
+  if (option === "shop") return room.shop.openFor(p);
   const q = d.quest ? QUEST_BY_ID.get(d.quest) : undefined;
   if (!q) return;
   if (option === "accept") {

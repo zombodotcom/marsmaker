@@ -5,8 +5,8 @@ MarsScape is the old-school-MMO mode of MarsMaker. It has:
 - six skills: mining, survey, fabrication, ranged, defence and hitpoints;
 - a 28-slot inventory, public chat, and void creatures from the rifts to shoot;
 - real HiRISE terrain, with one shared world per Mars site;
-- a lava-tube cave under every site, a bank, player trading, colonist quests, armour, and Rift Surge
-  boss events.
+- a lava-tube cave under every site, a bank, player trading, a trader's shop with credits,
+  colonist quests, armour, and Rift Surge boss events.
 
 This folder is the server: a Cloudflare Worker with one Durable Object ("room") per site. Player
 progress is stored in the room's SQLite storage. Everything runs on the Cloudflare free plan.
@@ -17,11 +17,13 @@ The wire protocol is in [PROTOCOL.md](PROTOCOL.md).
 - `src/bots.ts`: the colonists, server-run NPC players that live in every room (see below).
 - `src/cave.ts`: the lava tube under each site (layout generator, wall checks, map encoding).
 - `src/bank.ts`: the colony locker (bank) and player trading.
+- `src/shop.ts`: the trader's shop (credits, buy / sell / buyback, the shared shelf).
 - `src/quests.ts`: colonist quests, dialogs and Insight Lamps.
 - `src/events.ts`: the Rift Surge event.
 - `test/bots.mjs`: bot test. Bots chat, walk, mine, craft, drop, fight a skitter, and reconnect.
 - `test/community.mjs`: colonist test. Covers the greeting, the one-time starter kit, "help" escorts, the medic, scaling, and hibernation.
 - `test/features.mjs`: cave, bank, trading, quests, armour and Rift Surge test (needs `MARSSCAPE_TEST`).
+- `test/shop.mjs`: shop test: credits, buy / sell / buyback, the price curve, a randomised no-profit check, anti-dupe races (needs `MARSSCAPE_TEST`; `--live` runs the part that doesn't).
 - `test/load.mjs`: load test. Autonomous clients over several rooms, reporting tick jitter, message rates, errors, CPU and SQLite rows written.
 
 ## Colonists
@@ -30,9 +32,12 @@ Each room keeps a few NPC colonists, so a site never feels empty:
 - a **quartermaster** at the fabricator, who hands each new character a starter kit;
 - a **guard**, who protects players from creatures that jump them;
 - a **medic**, who heals anyone below half hp;
-- a **miner** or **surveyor**, who works the nodes near spawn.
+- a **miner** or **surveyor**, who works the nodes near spawn;
+- a **trader** at her stall by the fabricator, who runs the shop. She is always there, on top of
+  the crew below.
 
-Population: there are about 4 with one human, one fewer per extra human, and never fewer than 1.
+Population: there are about 4 with one human, one fewer per extra human, and never fewer than 1
+(not counting the trader).
 
 Chat commands:
 - **`help`** (or `follow me`): a guard comes and escorts you for 2 minutes.
@@ -53,6 +58,11 @@ sends you down the pit into the lava tube for an ancient relic and unlocks relic
 - **Colony locker:** a 100-slot bank next to the fabricator. Every change is saved at once, in the same
   step as your inventory.
 - **Trading:** two-step accept/confirm, checked and swapped atomically, logged.
+- **The trader's shop:** credits (from the starter kit, every creature kill and some quests) buy
+  medkits, water, bricks, plates, a chitin helmet, blasters and Insight Lamps from a shelf the whole
+  room shares. She buys almost anything for less than she sells it, and prices follow her stock,
+  so there's no buy-and-sell-back profit. Your last 10 sales can be bought back at exactly what she
+  paid, for 30 minutes. The Rift Surge trophies can't be sold.
 - **Armour:** helmets, suits, a shield and a cape, crafted at the fabricator. The armour bonus raises
   your defence roll.
 - **Rift Surge:** every 20–30 minutes while people play, a big rift opens near the landing site,
@@ -68,6 +78,7 @@ npx wrangler dev --port 8787 --var MARSSCAPE_TEST:1   # serves http://127.0.0.1:
 node test/bots.mjs                  # in a second terminal; prints PASS/FAIL, takes about 1 minute
 node test/community.mjs             # colonists; about 1-2 minutes; the medic check needs MARSSCAPE_TEST
 node test/features.mjs              # cave, bank, trading, quests, armour, surge; 3-5 minutes; needs MARSSCAPE_TEST
+node test/shop.mjs                  # the trader's shop; about 2 minutes; needs MARSSCAPE_TEST
 node test/load.mjs ws://127.0.0.1:8787 30 3 300   # 30 clients over 3 rooms for 5 minutes
 ```
 

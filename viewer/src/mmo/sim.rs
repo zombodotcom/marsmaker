@@ -10,6 +10,7 @@
 use super::cave;
 use super::grid::WalkGrid;
 use super::proto::*;
+use super::shop::{self, Shelf};
 use bevy::math::IVec2;
 use std::collections::{HashMap, VecDeque};
 
@@ -25,6 +26,8 @@ enum Task {
     Use(u32),
     /// walk up to a colonist, then talk
     Talk(u32),
+    /// walk up to the trader, then open her shop
+    Shop(u32),
 }
 
 struct P {
@@ -135,10 +138,13 @@ pub struct Sim {
     hold: bool,
     surge: Surge,
     next_temp: u32,
+    /// the trader's shelf, and whether her window is open
+    shelf: Shelf,
+    shop_open: bool,
 }
 
 /// Colonists: name, role.
-const COLONISTS: [(&str, &str); 5] = [("Quinn", "quartermaster"), ("Rix", "guard"), ("Doc Hollis", "medic"), ("Dusty Rae", "miner"), ("Valles Val", "surveyor")];
+const COLONISTS: [(&str, &str); 6] = [("Quinn", "quartermaster"), ("Rix", "guard"), ("Doc Hollis", "medic"), ("Dusty Rae", "miner"), ("Valles Val", "surveyor"), ("Juno", "trader")];
 
 const LORE: [&str; 9] = [
     "The old Martians didn't build the seal to keep us out. They built it to keep something in.",
@@ -157,11 +163,14 @@ fn role_line(role: &str, k: usize) -> &'static str {
         "guard" => &["Rifts are quiet today. Too quiet.", "Need an escort? Say 'help' and I'll come running.", "Skitters first. Work up to the stalkers."],
         "medic" => &["Low on hitpoints? Come find me.", "Medkits: a water flask and a core sample, at the fabricator.", "Hitpoints come back slowly on their own. Medkits are faster."],
         "quartermaster" => &["Bricks, plates, blasters - the fabricator does it all if you bring the stuff.", "Two iron plates make a blaster. Plates come from hematite.", "Void crystals stack. Everything else wants its own slot."],
+        "trader" => &["Credits for chitin, credits for crystals. I buy almost anything.", "Sold something by mistake? I'll sell it back at what I paid. For a while.", "Prices go up when the shelf runs low. Supply and demand, even out here."],
         "miner" => &["Ice opens up at Mining 15, hematite at 30. Keep swinging.", "A drill bit in your pack makes mining easier.", "Regolith's boring, but bricks don't make themselves."],
         _ => &["Outcrops give core samples. You'll want them for medkits and drill bits.", "The layers in these outcrops are older than any rift.", "Survey's quiet work. I like quiet."],
     };
     lines[k % lines.len()]
 }
+
+const TRADER_HELLO: &str = "Credits for chitin, credits for crystals. I buy almost anything and sell what a colonist needs. Want a look?";
 
 fn new_inv() -> Vec<Option<Slot>> {
     vec![None; INV_SLOTS]
@@ -196,6 +205,8 @@ impl Sim {
             hold: false,
             surge: Surge::default(),
             next_temp: 1000,
+            shelf: Shelf::default(),
+            shop_open: false,
         };
         s.place_world(grid);
         s
@@ -219,6 +230,10 @@ impl Sim {
         // the colony locker two tiles from the fabricator
         let locker = grid.nearest_walkable(fab + IVec2::new(-2, 0), 3).filter(|t| *t != self.spawn && *t != fab);
         taken.extend(locker);
+        // the trader's stall on the other side, with room for her to stand just south of it
+        let stall = grid.nearest_walkable(fab + IVec2::new(3, 0), 3).filter(|t| !taken.contains(t) && !taken.contains(&(*t + IVec2::Y)) && grid.ground_ok(*t + IVec2::Y));
+        taken.extend(stall);
+        taken.extend(stall.map(|t| t + IVec2::Y));
         let mut place = |s: &mut Sim, grid: &mut WalkGrid, rmin: i32, rmax: i32| -> Option<IVec2> {
             for _ in 0..200 {
                 let a = s.rand() * std::f64::consts::TAU;
@@ -260,6 +275,9 @@ impl Sim {
         if let Some(t) = locker {
             nodes.push(("locker", t));
         }
+        if let Some(t) = stall {
+            nodes.push(("stall", t));
+        }
         if let Some(t) = place(self, grid, 10, 30) {
             nodes.push(("pit", t));
         }
@@ -274,7 +292,11 @@ impl Sim {
     fn spawn_bots(&mut self, grid: &mut WalkGrid) {
         for (i, (name, role)) in COLONISTS.iter().enumerate() {
             let off = IVec2::new(self.rand_i(-5, 5), self.rand_i(-5, 5));
-            let tile = grid.nearest_walkable(self.spawn + off, 6).unwrap_or(self.spawn);
+            let tile = match (*role, self.trader_post()) {
+                ("trader", Some(t)) => t,
+                ("trader", None) => continue, // no room for a stall here
+                _ => grid.nearest_walkable(self.spawn + off, 6).unwrap_or(self.spawn),
+            };
             let mut skills = Skills::fresh();
             skills.mining = xp_for_level(if *role == "miner" { 45 } else { self.rand_i(5, 25) as u32 });
             skills.survey = xp_for_level(if *role == "surveyor" { 40 } else { self.rand_i(1, 20) as u32 });
@@ -303,6 +325,53 @@ impl Sim {
                 gear: Gear::default(),
             });
         }
+    }
+
+    /// Where the trader stands: just south of her stall.
+    fn trader_post(&self) -> Option<IVec2> {
+        self.nodes.iter().find(|n| n.kind == "stall").map(|n| n.tile + IVec2::Y)
+    }
+
+    fn trader(&self) -> Option<usize> {
+        self.bot_index("trader").first().copied()
+    }
+
+    /// Send the shop window (if it's open).
+    fn shop_view(&mut self) {
+        let (Some(me), Some(t)) = (self.me_index(), self.trader()) else { return };
+        if !self.shop_open {
+            return;
+        }
+        let (npc, name) = (self.players[t].id, self.players[t].name.clone());
+        let n = self.n;
+        let v = self.shelf.view(&self.players[me].inv, npc, &name, n);
+        self.out.push(v);
+    }
+
+    /// The shop is open and the trader is still within reach.
+    fn at_shop(&mut self) -> bool {
+        let (Some(me), Some(t)) = (self.me_index(), self.trader()) else { return false };
+        let (a, b) = (self.players[me].tile, self.players[t].tile);
+        if !self.shop_open || chebyshev((a.x, a.y), (b.x, b.y)) > SHOP_RANGE {
+            self.msg(ME, "You need to stand next to the trader's stall.");
+            return false;
+        }
+        true
+    }
+
+    /// A buy / sell / buyback went through (or was refused): tell the player, refresh the window.
+    fn shop_done(&mut self, r: Result<String, String>) {
+        match r {
+            Ok(text) => {
+                if let Some(me) = self.me_index() {
+                    let inv = self.players[me].inv.clone();
+                    self.out.push(S2C::Inv { inv });
+                }
+                self.out.push(S2C::Msg { text });
+            }
+            Err(text) => self.out.push(S2C::Msg { text }),
+        }
+        self.shop_view();
     }
 
     fn bot_index(&self, role: &str) -> Vec<usize> {
@@ -362,11 +431,12 @@ impl Sim {
                 for item in ["brick", "brick", "brick", "medkit"] {
                     got += self.give(me, item) as u32;
                 }
+                got += shop::add_to(&mut self.players[me].inv, "credits", KIT_CREDITS) as u32;
                 if got > 0 {
-                    self.say_as(q, "Here - three bricks and a medkit to get you started. Don't waste the medkit.");
+                    self.say_as(q, "Here - three bricks, a medkit and a few credits for the trader. Don't waste the medkit.");
                     let inv = self.players[me].inv.clone();
                     self.out.push(S2C::Inv { inv });
-                    self.out.push(S2C::Msg { text: "Quinn the quartermaster hands you 3 regolith bricks and a medkit.".into() });
+                    self.out.push(S2C::Msg { text: format!("Quinn the quartermaster hands you 3 regolith bricks, a medkit and {KIT_CREDITS} credits.") });
                 }
             }
         }
@@ -506,6 +576,44 @@ impl Sim {
             }
             C2S::DialogChoose { option } => self.choose(&option),
             C2S::Rub { slot, skill } => self.rub(slot, &skill),
+            C2S::ShopOpen { .. } => self.open_shop(),
+            C2S::ShopClose => self.shop_open = false,
+            C2S::ShopBuy { idx, qty } => {
+                if let (true, Some(me)) = (self.at_shop(), self.me_index()) {
+                    let r = self.shelf.buy(&mut self.players[me].inv, idx, qty);
+                    self.shop_done(r);
+                }
+            }
+            C2S::ShopSell { slot, qty } => {
+                if let (true, Some(me)) = (self.at_shop(), self.me_index()) {
+                    let r = self.shelf.sell(&mut self.players[me].inv, slot, qty, self.n);
+                    self.shop_done(r);
+                }
+            }
+            C2S::ShopBuyback { idx } => {
+                if let (true, Some(me)) = (self.at_shop(), self.me_index()) {
+                    let r = self.shelf.buyback(&mut self.players[me].inv, idx, self.n);
+                    self.shop_done(r);
+                }
+            }
+            C2S::Value { item } => {
+                let (buy, sell) = self.shelf.value(&item);
+                self.out.push(S2C::Value { item, buy, sell });
+            }
+        }
+    }
+
+    /// Walk up to the trader, then her shop opens (as the server's shop_open).
+    fn open_shop(&mut self) {
+        if self.in_cave {
+            return self.msg(ME, "There's no trader down here.");
+        }
+        let Some(t) = self.trader() else { return self.msg(ME, "There's nobody minding the stall right now.") };
+        let id = self.players[t].id;
+        self.dialog = None;
+        if let Some(p) = self.me() {
+            p.task = Task::Shop(id);
+            p.path.clear();
         }
     }
 
@@ -516,6 +624,11 @@ impl Sim {
         match kind {
             "fabricator" => {}
             "rift" => self.msg(pid, "A tear into the void. Stars where the ground should be, and things crawling out."),
+            "stall" => {
+                if pid == ME {
+                    self.open_shop();
+                }
+            }
             k if usable_node(k) => p.task = Task::Use(node),
             _ => {
                 p.task = Task::Gather(node);
@@ -584,10 +697,17 @@ impl Sim {
         }
     }
 
-    /// Test hook (`--mmo-script give:ITEM`): put an item in the local player's inventory.
+    /// Test hook (`--mmo-script give:ITEM` or `give:ITEM*N`): put items in the local player's inventory.
     pub fn cheat_give(&mut self, item: &str) -> Vec<S2C> {
+        let (item, n) = item.split_once('*').map_or((item, 1), |(i, n)| (i, n.parse().unwrap_or(1)));
         if let Some(pi) = self.players.iter().position(|p| p.id == ME) {
-            self.give(pi, item);
+            if stacks(item) {
+                shop::add_to(&mut self.players[pi].inv, item, n);
+            } else {
+                for _ in 0..n {
+                    self.give(pi, item);
+                }
+            }
             let inv = self.players[pi].inv.clone();
             return vec![S2C::Inv { inv }];
         }
@@ -681,6 +801,19 @@ impl Sim {
             self.player_tick(pi, grid);
         }
         self.colonists_help();
+        if self.shop_open {
+            let near = self.me_index().zip(self.trader()).is_some_and(|(m, t)| {
+                let (a, b) = (self.players[m].tile, self.players[t].tile);
+                chebyshev((a.x, a.y), (b.x, b.y)) <= SHOP_RANGE
+            });
+            if !near || self.in_cave {
+                self.shop_open = false;
+                self.out.push(S2C::ShopEnd { reason: "You walked away from the stall.".into() });
+            }
+        }
+        if n % RESTOCK_TICKS == 0 && self.shelf.restock() {
+            self.shop_view();
+        }
         self.npc_tick(grid);
         if !self.in_cave {
             self.surge_tick(grid);
@@ -822,6 +955,28 @@ impl Sim {
                 self.players[pi].task = Task::None;
                 self.players[pi].path.clear();
                 self.talk(ci);
+            }
+            Task::Shop(cid) => {
+                let Some(ci) = self.players.iter().position(|q| q.id == cid) else {
+                    self.players[pi].task = Task::None;
+                    return;
+                };
+                let (ct, mt) = (self.players[ci].tile, self.players[pi].tile);
+                if chebyshev((ct.x, ct.y), (mt.x, mt.y)) > SHOP_RANGE {
+                    if self.players[pi].path.is_empty() {
+                        let path = grid.find_path(mt, ct, |t| chebyshev((t.x, t.y), (ct.x, ct.y)) <= SHOP_RANGE);
+                        if path.is_empty() {
+                            self.players[pi].task = Task::None;
+                            return;
+                        }
+                        self.players[pi].path = path.into_iter().collect();
+                    }
+                    return;
+                }
+                self.players[pi].task = Task::None;
+                self.players[pi].path.clear();
+                self.shop_open = true;
+                self.shop_view();
             }
             Task::Gather(nid) => {
                 if !p.path.is_empty() {
@@ -968,11 +1123,15 @@ impl Sim {
             self.surge_finish(true);
             return;
         }
-        let mut got = Vec::new();
+        let mut got: Vec<String> = Vec::new();
+        let credits = ((def.level as f64 * (0.5 + self.rand())).floor() as u32).max(1);
+        if shop::add_to(&mut self.players[killer].inv, "credits", credits) {
+            got.push(format!("{credits} credits"));
+        }
         for (item, chance) in creature_drops(def.kind) {
             if self.rand() < *chance {
                 if self.give(killer, item) {
-                    got.push(item_name(item));
+                    got.push(item_name(item).to_string());
                 } else {
                     self.msg(pid, format!("Your inventory is full: the {} crumbles to dust.", item_name(item).to_lowercase()));
                 }
@@ -1184,6 +1343,16 @@ impl Sim {
         if !matches!(p.task, Task::None) || !p.path.is_empty() {
             return;
         }
+        if role == "trader" {
+            // minds the stall: back to her post if she wandered off (a fight)
+            if let Some(post) = self.trader_post() {
+                if at != post && self.players[pi].path.is_empty() {
+                    let path = grid.find_path(at, post, |t| t == post);
+                    self.players[pi].path = path.into_iter().collect();
+                }
+            }
+            return;
+        }
         if matches!(role, "guard" | "medic" | "quartermaster") {
             // stay on post near the landing site / fabricator
             let idle = self.rand_i(3, 10) as u32;
@@ -1338,6 +1507,7 @@ impl Sim {
             self.players = vec![me];
             self.in_cave = true;
             self.dialog = None;
+            self.shop_open = false;
             let w = self.welcome();
             self.out.push(w);
             self.out.push(S2C::Msg { text: "You climb down into the lava tube. The walls glow faintly, and something skitters in the dark.".into() });
@@ -1533,6 +1703,9 @@ impl Sim {
 
     fn talk(&mut self, ci: usize) {
         let Some(role) = self.players[ci].bot.as_ref().map(|b| b.role) else { return };
+        if role == "trader" {
+            return self.dialog(ci, TRADER_HELLO.into(), None, vec![("shop".into(), "Let's trade.".into()), ("bye".into(), "Not now.".into())]);
+        }
         let roles: Vec<&str> = self.players.iter().filter_map(|p| p.bot.as_ref().map(|b| b.role)).collect();
         let mine: Vec<&'static QuestDef> = QUESTS.iter().filter(|q| (if roles.contains(&q.giver) { q.giver } else { "quartermaster" }) == role).collect();
         if let Some(q) = mine.iter().find(|q| self.quest_ready(q)) {
@@ -1580,6 +1753,10 @@ impl Sim {
             return self.out.push(S2C::DialogEnd);
         }
         self.out.push(S2C::DialogEnd);
+        if option == "shop" {
+            self.shop_open = true;
+            return self.shop_view();
+        }
         let Some(q) = quest.and_then(quest_def) else { return };
         match option {
             "accept" => {

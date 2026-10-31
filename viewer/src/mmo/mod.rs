@@ -21,6 +21,7 @@ mod look;
 mod net;
 mod pick;
 pub mod proto;
+mod shop;
 mod sim;
 mod store;
 mod ui;
@@ -164,6 +165,18 @@ enum Intent {
 }
 
 /// The trade window as the server last described it.
+/// The trader's window: her shelf, your buyback list, her offer per item in your pack.
+pub struct ShopView {
+    pub npc: u32,
+    pub name: String,
+    pub stock: Vec<ShopItem>,
+    pub buyback: Vec<BuybackItem>,
+    pub sell: HashMap<String, u32>,
+    pub credits: u32,
+    /// 0 = buy, 1 = buyback
+    pub tab: u8,
+}
+
 pub struct TradeView {
     pub stage: u8,
     pub name: String,
@@ -237,6 +250,8 @@ pub struct Scape {
     pub qp: u32,
     /// the colony locker is open: its contents
     pub bank: Option<Vec<Slot>>,
+    /// the trader's shop is open
+    pub shop: Option<ShopView>,
     pub trade: Option<TradeView>,
     /// someone asked to trade: (id, name)
     pub trade_req: Option<(u32, String)>,
@@ -351,6 +366,7 @@ impl Scape {
                 self.intent = Intent::Fab(id);
             }
             "rift" => self.say("A tear into the void. Stars where the ground should be, and things crawling out.", GAME),
+            "stall" => self.shop_open(None),
             _ => {
                 self.approach(tile, 1, Some(C2S::Act { node: id }));
                 self.intent = Intent::None;
@@ -475,6 +491,41 @@ impl Scape {
         self.dirty = true;
     }
 
+    /// Open the trader's shop (the server walks you over to her first).
+    pub fn shop_open(&mut self, id: Option<u32>) {
+        self.intent = Intent::None;
+        self.dialog = None;
+        let at = id.and_then(|i| self.players.get(&i)).map(|a| a.tile).or_else(|| self.nodes.values().find(|n| n.kind == "stall").map(|n| n.tile));
+        if let Some(w) = at.and_then(|t| self.grid.world(t)) {
+            self.marker = Some((w, true));
+        }
+        self.send(C2S::ShopOpen { id });
+    }
+
+    pub fn shop_close(&mut self) {
+        if self.shop.take().is_some() {
+            self.send(C2S::ShopClose);
+        }
+        self.dirty = true;
+    }
+
+    pub fn shop_buy(&mut self, idx: usize, qty: Qty) {
+        self.send(C2S::ShopBuy { idx, qty });
+    }
+
+    pub fn shop_sell(&mut self, slot: usize, qty: Qty) {
+        self.send(C2S::ShopSell { slot, qty });
+    }
+
+    pub fn shop_buyback(&mut self, idx: usize) {
+        self.send(C2S::ShopBuyback { idx });
+    }
+
+    /// "Value": the trader's price and offer for one, said in chat.
+    pub fn value(&mut self, item: &str) {
+        self.send(C2S::Value { item: item.to_string() });
+    }
+
     pub fn fab_near(&self) -> Option<u32> {
         let me = self.my_tile()?;
         self.nodes.iter().find(|(_, n)| n.kind == "fabricator" && chebyshev((n.tile.x, n.tile.y), (me.x, me.y)) <= FAB_RANGE).map(|(i, _)| *i)
@@ -594,6 +645,7 @@ fn start(
         quests: HashMap::new(),
         qp: 0,
         bank: None,
+        shop: None,
         trade: None,
         trade_req: None,
         dialog: None,
@@ -780,6 +832,7 @@ fn travel(sc: &mut Scape, cx: &mut Ctx, st: &mut UiState, site: &Site, room: Str
     sc.me = None;
     sc.room = room.clone();
     sc.bank = None;
+    sc.shop = None;
     sc.trade = None;
     sc.trade_req = None;
     sc.dialog = None;
@@ -896,6 +949,7 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
             sc.quests = you.quests.clone();
             sc.qp = you.quest_points.max(quest_points(&sc.quests));
             sc.bank = None;
+            sc.shop = None;
             sc.trade = None;
             sc.trade_req = None;
             sc.dialog = None;
@@ -1094,6 +1148,33 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
             st.fab_open = false;
             sc.dirty = true;
         }
+        S2C::Shop { npc, name, stock, buyback, sell, credits } => {
+            let tab = sc.shop.as_ref().map_or(0, |s| s.tab);
+            // the buyback tab empties: back to buying
+            let tab = if tab == 1 && buyback.is_empty() { 0 } else { tab };
+            sc.shop = Some(ShopView { npc, name, stock, buyback, sell, credits, tab });
+            sc.bank = None;
+            sc.dialog = None;
+            sc.lamp = None;
+            st.fab_open = false;
+            sc.dirty = true;
+        }
+        S2C::ShopEnd { reason } => {
+            if sc.shop.take().is_some() && !reason.is_empty() {
+                sc.say(reason, GAME);
+            }
+            sc.dirty = true;
+        }
+        S2C::Value { item, buy, sell } => {
+            let name = item_name(&item).to_string();
+            let line = match (buy, sell) {
+                (Some(b), Some(s)) => format!("{name}: the trader sells one for {b} credits and buys one for {s}."),
+                (None, Some(s)) => format!("{name}: the trader would buy one for {s} credits."),
+                (Some(b), None) => format!("{name}: the trader sells one for {b} credits."),
+                (None, None) => format!("{name}: the trader won't deal in those."),
+            };
+            sc.say(line, GAME);
+        }
         S2C::TradeRequest { from, name } => {
             sc.say(format!("{name} wishes to trade with you."), TRADE);
             sc.trade_req = Some((from, name));
@@ -1103,6 +1184,7 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
             sc.trade = Some(TradeView { stage, name, mine, theirs, me_ok: accepted.me, them_ok: accepted.them });
             sc.trade_req = None;
             sc.bank = None;
+            sc.shop = None;
             st.fab_open = false;
             sc.dirty = true;
         }
@@ -1211,6 +1293,45 @@ fn keys(keys: Res<ButtonInput<KeyCode>>, mut kb: MessageReader<bevy::input::keyb
         return;
     }
     use bevy::input::keyboard::Key;
+    if let Some((f, mut digits)) = st.amount.clone() {
+        for ev in &typed {
+            match &ev.logical_key {
+                Key::Enter => {
+                    st.amount = None;
+                    sc.chat_dirty = true;
+                    if let Ok(n) = digits.parse::<u32>() {
+                        if n > 0 {
+                            match f {
+                                ui::AmountFor::Buy(i) => sc.shop_buy(i, Qty::N(n)),
+                                ui::AmountFor::Sell(s) => sc.shop_sell(s, Qty::N(n)),
+                            }
+                        }
+                    }
+                    return;
+                }
+                Key::Escape => {
+                    st.amount = None;
+                    sc.chat_dirty = true;
+                    return;
+                }
+                Key::Backspace => {
+                    digits.pop();
+                }
+                _ => {
+                    if let Some(t) = &ev.text {
+                        for c in t.chars().filter(|c| c.is_ascii_digit()) {
+                            if digits.len() < 4 {
+                                digits.push(c);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        st.amount = Some((f, digits));
+        sc.chat_dirty = true;
+        return;
+    }
     if let Some(mut line) = st.typing.clone() {
         let mut send = false;
         for ev in &typed {
@@ -1273,7 +1394,12 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
         Target::Player(id) => {
             let Some(a) = sc.players.get(&id) else { return Vec::new() };
             let mut o = Vec::new();
-            match &a.role {
+            match a.role.as_deref() {
+                // left-click the trader to open her shop
+                Some("trader") => {
+                    o.push(Opt::new(format!("Trade {} (trader)", a.name), UiAct::ShopOpen(id)).on(t));
+                    o.push(Opt::new(format!("Talk-to {} (trader)", a.name), UiAct::Talk(id)).on(t));
+                }
                 Some(r) => o.push(Opt::new(format!("Talk-to {} ({r})", a.name), UiAct::Talk(id)).on(t)),
                 None => o.push(Opt::new(format!("Trade with {}", a.name), UiAct::TradeWith(id)).on(t)),
             }
@@ -1281,6 +1407,7 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
                 Some("guard") => format!("{}, colony guard. Say \"help\" and they'll watch your back.", a.name),
                 Some("medic") => format!("{}, the colony medic. Patches up anyone who's hurt.", a.name),
                 Some("quartermaster") => format!("{}, the quartermaster. Hands newcomers a starter kit.", a.name),
+                Some("trader") => format!("{}, the colony trader. Buys almost anything, sells the basics, for credits.", a.name),
                 Some(r) => format!("{}, a colonist ({r}).", a.name),
                 None => format!("{}, a fellow astronaut.", a.name),
             };
@@ -1295,6 +1422,7 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
                 "fabricator" => o.push(Opt::new("Use Fabricator".into(), UiAct::Node(id)).on(t)),
                 "rift" => {}
                 "locker" => o.push(Opt::new("Open Colony locker".into(), UiAct::Node(id)).on(t)),
+                "stall" => o.push(Opt::new("Browse Trader's stall".into(), UiAct::Node(id)).on(t)),
                 "pit" => o.push(Opt::new("Climb-down Lava-tube pit".into(), UiAct::Node(id)).on(t)),
                 "ladder" => o.push(Opt::new("Climb-up Ladder".into(), UiAct::Node(id)).on(t)),
                 k => {
@@ -1306,6 +1434,7 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
             let ex = match n.kind.as_str() {
                 "fabricator" => "Turns raw materials into useful things.",
                 "locker" => "The colony's lockers. Whatever you put in stays safe, even if you don't.",
+                "stall" => "Crates of medkits, flasks and bricks under a patched awning. Prices chalked on a board.",
                 "pit" => "A collapsed lava tube. A rope goes down into the dark, and something down there glows.",
                 "ladder" => "Daylight, a long way up.",
                 "rift" => "A tear into the void. Stars where the ground should be, and things crawling out.",
@@ -1501,6 +1630,8 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
                 // with the locker or a trade open, a click puts the item in
                 let opts = if sc.trade.is_some() {
                     ui::move_options(i, &item.item, "Offer")
+                } else if sc.shop.is_some() {
+                    ui::sell_options(i, &item.item)
                 } else if sc.bank.is_some() {
                     ui::move_options(i, &item.item, "Deposit")
                 } else {
@@ -1514,11 +1645,37 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
                         UiAct::Item(s, v) => sc.item(s, v),
                         UiAct::Deposit(s, q) => sc.bank_deposit(s, q),
                         UiAct::Offer(s, q) => sc.trade_offer(s, q),
+                        UiAct::Sell(s, q) => sc.shop_sell(s, q),
                         _ => {}
                     }
                 }
             }
             UiAct::Talk(id) => sc.talk(id),
+            UiAct::ShopOpen(id) => sc.shop_open(Some(id)),
+            UiAct::Buy(i, q) => {
+                if m.alt {
+                    if let Some(it) = sc.shop.as_ref().and_then(|s| s.stock.get(i)).cloned() {
+                        st.ctx = Some(CtxMenu { at: st.cursor, opts: ui::buy_options(i, &it.item) });
+                    }
+                } else {
+                    sc.shop_buy(i, q);
+                }
+            }
+            UiAct::Sell(s, q) => sc.shop_sell(s, q),
+            UiAct::Buyback(i) => sc.shop_buyback(i),
+            UiAct::ShopTab(t) => {
+                if let Some(s) = sc.shop.as_mut() {
+                    s.tab = t;
+                }
+                sc.dirty = true;
+            }
+            UiAct::CloseShop => sc.shop_close(),
+            UiAct::Value(item) => sc.value(&item),
+            UiAct::Amount(f) => {
+                st.amount = Some((f, String::new()));
+                st.typing = None;
+                sc.chat_dirty = true;
+            }
             UiAct::TradeWith(id) => sc.trade_with(id),
             UiAct::Choose(o) => sc.choose(&o),
             UiAct::Deposit(s, q) => sc.bank_deposit(s, q),
@@ -1580,6 +1737,17 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
     if st.fab_open && sc.fab_near().is_none() && sc.me.is_some() {
         st.fab_open = false;
         sc.dirty = true;
+    }
+    if let (Some(s), Some(me)) = (sc.shop.as_ref(), sc.my_tile()) {
+        let far = sc.players.get(&s.npc).is_none_or(|a| chebyshev((a.tile.x, a.tile.y), (me.x, me.y)) > SHOP_RANGE + 1);
+        if far {
+            sc.shop = None;
+            sc.dirty = true;
+        }
+    }
+    if sc.shop.is_none() && st.amount.is_some() {
+        st.amount = None;
+        sc.chat_dirty = true;
     }
     if sc.bank.is_some() && sc.near_kind("locker").is_none() && sc.me.is_some() {
         sc.bank = None;
@@ -2161,6 +2329,49 @@ fn script(
             sc.bank = None;
             sc.dirty = true;
         }
+        "shop" => {
+            // open the trader's shop (walks over first)
+            let id = sc.players.iter().find(|(_, a)| a.role.as_deref() == Some("trader")).map(|(i, _)| *i);
+            sc.shop_open(id);
+        }
+        "shopbuy" | "shopsell" => {
+            // IDX[:N|all] (shelf index / pack slot)
+            let (a, q) = arg.split_once(':').unwrap_or((arg.as_str(), "1"));
+            let i: usize = a.parse().unwrap_or(0);
+            let q = if q == "all" { Qty::All } else { Qty::N(q.parse().unwrap_or(1)) };
+            if cmd == "shopbuy" {
+                sc.shop_buy(i, q);
+            } else {
+                sc.shop_sell(i, q);
+            }
+        }
+        "buyback" => sc.shop_buyback(arg.parse().unwrap_or(0)),
+        "shoptab" => {
+            out.write(UiMsg { act: UiAct::ShopTab(arg.parse().unwrap_or(0)), alt: false });
+        }
+        "closeshop" => sc.shop_close(),
+        "value" => sc.value(&arg),
+        "buyctx" | "sellctx" => {
+            // the right-click menu of a shelf entry / pack slot, at the cursor
+            let i: usize = arg.parse().unwrap_or(0);
+            let opts = if cmd == "buyctx" {
+                sc.shop.as_ref().and_then(|s| s.stock.get(i)).map(|it| ui::buy_options(i, &it.item))
+            } else {
+                sc.inv.get(i).cloned().flatten().map(|it| ui::sell_options(i, &it.item))
+            };
+            if let Some(opts) = opts {
+                let at = st.fake_cursor.unwrap_or(Vec2::new(640.0, 300.0));
+                st.ctx = Some(CtxMenu { at, opts });
+            }
+        }
+        "amount" => {
+            // the "X" prompt: amount:sell:SLOT or amount:buy:IDX
+            if let Some((k, i)) = arg.split_once(':') {
+                let i = i.parse().unwrap_or(0);
+                st.amount = Some((if k == "buy" { ui::AmountFor::Buy(i) } else { ui::AmountFor::Sell(i) }, "12".into()));
+                sc.chat_dirty = true;
+            }
+        }
         "trade" => {
             // ask the nearest other (human) player to trade
             let id = sc.players.iter().filter(|(i, a)| a.role.is_none() && Some(**i) != sc.me).min_by_key(|(_, a)| chebyshev((a.tile.x, a.tile.y), (me.x, me.y))).map(|(i, _)| *i);
@@ -2252,7 +2463,7 @@ fn script(
             let me_a = sc.me.and_then(|m| sc.players.get(&m));
             let alive = sc.npcs.values().filter(|a| a.anim != anim::DEAD).count();
             info!(
-                "mmo-script: log2: room={} cave={} gear={:?} armour={} qp={} quests={:?} bank={:?} trade={:?} dialog={:?} surge={:?}",
+                "mmo-script: log2: room={} cave={} gear={:?} armour={} qp={} quests={:?} bank={:?} shop={:?} trade={:?} dialog={:?} surge={:?}",
                 sc.room,
                 sc.cave.is_some(),
                 sc.gear,
@@ -2260,6 +2471,7 @@ fn script(
                 sc.qp,
                 sc.quests.iter().map(|(k, v)| format!("{k}:{}:{}:{}", v.s, v.step, v.p)).collect::<Vec<_>>(),
                 sc.bank.as_ref().map(|b| b.iter().map(|s| format!("{}x{}", s.item, s.qty)).collect::<Vec<_>>()),
+                sc.shop.as_ref().map(|s| (s.credits, s.stock.iter().map(|x| format!("{}x{}@{}", x.item, x.qty, x.price)).collect::<Vec<_>>(), s.buyback.len())),
                 sc.trade.as_ref().map(|t| (t.stage, t.mine.len(), t.theirs.len(), t.me_ok, t.them_ok)),
                 sc.dialog.as_ref().map(|d| (d.name.clone(), d.options.iter().map(|o| o.id.clone()).collect::<Vec<_>>())),
                 sc.surge.as_ref().map(|v| (v.phase.clone(), v.at, v.ends_tick.saturating_sub(sc.tick_n)))

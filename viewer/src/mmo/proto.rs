@@ -45,6 +45,20 @@ pub enum C2S {
     DialogChoose { option: String },
     /// rub an Insight Lamp on a skill
     Rub { slot: usize, skill: String },
+    /// the trader (her colonist id): the server walks you over, then answers with `shop`
+    ShopOpen {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<u32>,
+    },
+    ShopClose,
+    /// idx into the shop's stock list
+    ShopBuy { idx: usize, qty: Qty },
+    /// from an inventory slot
+    ShopSell { slot: usize, qty: Qty },
+    /// idx into your buyback list
+    ShopBuyback { idx: usize },
+    /// what the trader charges / pays for one, right now
+    Value { item: String },
 }
 
 /// An amount: a number, or "all".
@@ -245,6 +259,27 @@ pub struct EventInfo {
     pub ends_in: u64,
 }
 
+/// One shelf in the shop: `price` = buy one now (0 = sold out), `sell` = what she pays for one.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ShopItem {
+    pub item: String,
+    pub qty: u32,
+    #[serde(default)]
+    pub price: u32,
+    #[serde(default)]
+    pub sell: u32,
+}
+
+/// One of your recent sales: buying it back costs exactly `price` (what you were paid).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BuybackItem {
+    pub item: String,
+    pub qty: u32,
+    pub price: u32,
+    #[serde(default)]
+    pub expires_in: u32,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DialogOpt {
     pub id: String,
@@ -427,6 +462,33 @@ pub enum S2C {
     Event(EventInfo),
     NpcSpawn { npc: NpcInfo },
     NpcDespawn { id: u32 },
+    /// the trader's window: her shelf (shared by the room), your buyback list, her offer for each
+    /// item in your pack, your credits
+    Shop {
+        #[serde(default)]
+        npc: u32,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        stock: Vec<ShopItem>,
+        #[serde(default)]
+        buyback: Vec<BuybackItem>,
+        #[serde(default)]
+        sell: HashMap<String, u32>,
+        #[serde(default)]
+        credits: u32,
+    },
+    ShopEnd {
+        #[serde(default)]
+        reason: String,
+    },
+    Value {
+        item: String,
+        #[serde(default)]
+        buy: Option<u32>,
+        #[serde(default)]
+        sell: Option<u32>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -569,6 +631,7 @@ pub fn item_name(id: &str) -> &str {
         "relic_suit" => "Relic Armour",
         "rift_blade" => "Rift Blade",
         "void_cape" => "Void Cape",
+        "credits" => "Credits",
         other => other,
     }
 }
@@ -600,6 +663,7 @@ pub fn item_examine(id: &str) -> &str {
         "relic_suit" => "The glyphs glow when rifts are near. Armour +48 (Defence 60).",
         "rift_blade" => "A sliver of the void with an edge. Reach 2 (Ranged 50).",
         "void_cape" => "Proof you stood your ground in a Rift Surge.",
+        "credits" => "Colony scrip. The trader takes it; the void doesn't care.",
         _ => "Nothing interesting happens.",
     }
 }
@@ -629,6 +693,7 @@ pub fn item_color(id: &str) -> [f32; 3] {
         "relic_helmet" | "relic_suit" => [0.90, 0.68, 0.25],
         "rift_blade" => [0.75, 0.40, 1.0],
         "void_cape" => [0.45, 0.20, 0.75],
+        "credits" => [1.0, 0.75, 0.15],
         _ => [0.5, 0.5, 0.5],
     }
 }
@@ -670,6 +735,7 @@ pub fn node_name(kind: &str) -> &str {
         "locker" => "Colony locker",
         "pit" => "Lava-tube pit",
         "ladder" => "Ladder",
+        "stall" => "Trader's stall",
         k => node_def(k).map_or(k, |d| d.name),
     }
 }
@@ -781,13 +847,13 @@ pub struct QuestDef {
 
 /// Colonist quests (the same list the server hands out).
 pub const QUESTS: &[QuestDef] = &[
-    QuestDef { id: "skitter_cull", name: "Pest Control", giver: "guard", qp: 1, req: &[], steps: &[QuestStep { kind: "kill", target: "skitter", n: 5, text: "Kill 5 Void Skitters" }], offer: "Skitters keep crawling out of the near rifts. Thin them out: five should do it.", thanks: "Nice shooting. The perimeter's quieter already.", items: &[("medkit", 1)], lamps: 1, reward: "1 Insight Lamp, 1 medkit" },
+    QuestDef { id: "skitter_cull", name: "Pest Control", giver: "guard", qp: 1, req: &[], steps: &[QuestStep { kind: "kill", target: "skitter", n: 5, text: "Kill 5 Void Skitters" }], offer: "Skitters keep crawling out of the near rifts. Thin them out: five should do it.", thanks: "Nice shooting. The perimeter's quieter already.", items: &[("medkit", 1), ("credits", 60)], lamps: 1, reward: "1 Insight Lamp, 1 medkit, 60 credits" },
     QuestDef { id: "brick_drive", name: "Building Blocks", giver: "quartermaster", qp: 1, req: &[], steps: &[QuestStep { kind: "craft", target: "brick", n: 5, text: "Make 5 regolith bricks at the fabricator" }], offer: "The habitat needs bricks. Sinter five at the fabricator and you've earned your keep.", thanks: "Good, solid bricks. The colony grows.", items: &[("medkit", 1)], lamps: 1, reward: "1 Insight Lamp, 1 medkit" },
     QuestDef { id: "ice_run", name: "Thirsty Colony", giver: "miner", qp: 1, req: &[(Skill::Mining, 15)], steps: &[QuestStep { kind: "gather", target: "ice", n: 5, text: "Mine 5 chunks of buried ice" }], offer: "Water's running low. Dig up five chunks of ice for the tanks?", thanks: "That'll keep the taps running. Take this drill bit, it's spare.", items: &[("drill_bit", 1)], lamps: 1, reward: "1 Insight Lamp, 1 drill bit" },
     QuestDef { id: "core_samples", name: "Rock Solid", giver: "surveyor", qp: 1, req: &[], steps: &[QuestStep { kind: "deliver", target: "sample", n: 3, text: "Bring 3 core samples" }], offer: "I need core samples from the pale outcrops. Three of them. Something in the layers is glowing.", thanks: "These layers predate the rifts. Mostly. Thanks!", items: &[("medkit", 1)], lamps: 1, reward: "1 Insight Lamp, 1 medkit" },
     QuestDef { id: "field_hospital", name: "Field Hospital", giver: "medic", qp: 1, req: &[(Skill::Fabrication, 10)], steps: &[QuestStep { kind: "deliver", target: "water", n: 2, text: "Bring 2 water flasks" }], offer: "My med bay is dry. Two flasks of water, please: melt some ice at the fabricator.", thanks: "Perfect. Here, a couple of medkits for your trouble.", items: &[("medkit", 2)], lamps: 1, reward: "1 Insight Lamp, 2 medkits" },
-    QuestDef { id: "dust_to_dust", name: "Dust to Dust", giver: "guard", qp: 2, req: &[(Skill::Ranged, 15)], steps: &[QuestStep { kind: "kill", target: "stalker", n: 3, text: "Kill 3 Dust Stalkers" }], offer: "Dust Stalkers are circling the colony. Put three of them down.", thanks: "That's three fewer pairs of eyes in the dust. Here, chitin armour from the last batch.", items: &[("chitin_suit", 1)], lamps: 2, reward: "2 Insight Lamps, a chitin suit" },
-    QuestDef { id: "heavy_metal", name: "Heavy Metal", giver: "guard", qp: 2, req: &[(Skill::Ranged, 35)], steps: &[QuestStep { kind: "kill", target: "golem", n: 1, text: "Destroy a Rift Golem" }], offer: "A Rift Golem is pulling itself together out past the far rifts. Break it before it finishes.", thanks: "You actually did it. Take the crystals: it won't be needing them.", items: &[("void_crystal", 5)], lamps: 2, reward: "2 Insight Lamps, 5 void crystals" },
+    QuestDef { id: "dust_to_dust", name: "Dust to Dust", giver: "guard", qp: 2, req: &[(Skill::Ranged, 15)], steps: &[QuestStep { kind: "kill", target: "stalker", n: 3, text: "Kill 3 Dust Stalkers" }], offer: "Dust Stalkers are circling the colony. Put three of them down.", thanks: "That's three fewer pairs of eyes in the dust. Here, chitin armour from the last batch.", items: &[("chitin_suit", 1), ("credits", 200)], lamps: 2, reward: "2 Insight Lamps, a chitin suit, 200 credits" },
+    QuestDef { id: "heavy_metal", name: "Heavy Metal", giver: "guard", qp: 2, req: &[(Skill::Ranged, 35)], steps: &[QuestStep { kind: "kill", target: "golem", n: 1, text: "Destroy a Rift Golem" }], offer: "A Rift Golem is pulling itself together out past the far rifts. Break it before it finishes.", thanks: "You actually did it. Take the crystals: it won't be needing them.", items: &[("void_crystal", 5), ("credits", 400)], lamps: 2, reward: "2 Insight Lamps, 5 void crystals, 400 credits" },
     QuestDef {
         id: "echoes",
         name: "Echoes Below",
@@ -825,7 +891,81 @@ pub const FAB_RANGE: i32 = 1;
 
 /// Items that stack in one slot.
 pub fn stacks(item: &str) -> bool {
-    item == "void_crystal"
+    matches!(item, "void_crystal" | "credits")
+}
+
+// ------------------------------------------------------------------------------------ trader
+
+/// Base value of each item in credits (as the server's `VALUE`). The trader sells above value and
+/// buys below it: her best offer (0.6x) is under her lowest price (1.0x), so no buy/sell loop pays.
+pub fn item_value(item: &str) -> Option<u32> {
+    Some(match item {
+        "regolith" => 2,
+        "ice" => 6,
+        "hematite" => 12,
+        "sample" => 8,
+        "brick" => 6,
+        "water" => 14,
+        "iron_plate" => 30,
+        "drill_bit" => 80,
+        "pistol" => 120,
+        "rifle" => 400,
+        "plasma_gun" => 1500,
+        "medkit" => 40,
+        "void_crystal" => 60,
+        "chitin" => 10,
+        "ancient_relic" => 250,
+        "xp_lamp" => 2000,
+        "chitin_helmet" => 45,
+        "chitin_suit" => 70,
+        "iron_helmet" => 110,
+        "iron_suit" => 220,
+        "void_shield" => 600,
+        "relic_helmet" => 900,
+        "relic_suit" => 1400,
+        _ => return None,
+    })
+}
+
+/// Rift Surge trophies are bound to whoever earned them; credits are the money itself.
+pub fn unsellable(item: &str) -> bool {
+    matches!(item, "rift_blade" | "void_cape" | "credits") || item_value(item).is_none()
+}
+
+/// What the trader normally keeps on the shelf.
+pub const SHOP_STOCK: &[(&str, u32)] = &[("medkit", 10), ("water", 15), ("brick", 25), ("iron_plate", 10), ("chitin_helmet", 3), ("pistol", 3), ("xp_lamp", 2)];
+pub const SHOP_MAX: u32 = 500;
+pub const RESTOCK_TICKS: u64 = 50;
+/// Credits in the quartermaster's starter kit.
+pub const KIT_CREDITS: u32 = 100;
+/// The trader serves you within this many tiles.
+pub const SHOP_RANGE: i32 = 2;
+
+pub fn shop_normal(item: &str) -> Option<u32> {
+    SHOP_STOCK.iter().find(|(i, _)| *i == item).map(|(_, n)| *n)
+}
+
+/// Buy one when the shelf holds `qty` (>= 1): 1.6x value nearly sold out, 1.0x at twice normal stock.
+pub fn buy_price(item: &str, qty: u32) -> u32 {
+    let v = item_value(item).unwrap_or(0) as f64;
+    let f = match shop_normal(item) {
+        Some(n) if n > 0 => (qty as f64 / (2.0 * n as f64)).clamp(0.0, 1.0),
+        _ => 0.5,
+    };
+    ((v * (1.6 - 0.6 * f)).ceil() as u32).max(1)
+}
+
+/// Sell one when the shelf holds `qty`: 0.6x value when she has none, 0.3x when overflowing.
+pub fn sell_price(item: &str, qty: u32) -> u32 {
+    if unsellable(item) {
+        return 0;
+    }
+    let v = item_value(item).unwrap_or(0) as f64;
+    let f = match shop_normal(item) {
+        Some(n) if n > 0 => (qty as f64 / (2.0 * n as f64)).clamp(0.0, 1.0),
+        _ => (qty as f64 / 10.0).min(1.0),
+    };
+    (v * (0.6 - 0.3 * f)).floor() as u32
 }
 
 pub fn count(inv: &[Option<Slot>], item: &str) -> u32 {
