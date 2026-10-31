@@ -367,6 +367,7 @@ pub fn spawn(commands: &mut Commands, images: &mut Assets<Image>) {
 fn short(item: &str) -> &str {
     match item {
         "hematite" => "Hematite",
+        "brick" => "Brick",
         "ice" => "Ice",
         "water" => "Water",
         "sample" => "Sample",
@@ -467,16 +468,16 @@ fn rgb(c: [f32; 3]) -> Color {
 
 fn side_pack(p: &mut ChildSpawnerCommands, sc: &Scape) {
     p.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::flex(4, 1.0), column_gap: Val::Px(3.0), row_gap: Val::Px(3.0), ..default() }).with_children(|g| {
-        // taller cells while the shop is open: they show her offer too
-        let h = if sc.shop.is_some() { 50.0 } else { 40.0 };
+        // while the shop is open the cells also show her offer: same size, a slimmer swatch
+        let shop = sc.shop.is_some();
         for (i, s) in sc.inv.iter().enumerate().take(INV_SLOTS) {
-            let e = button(g, UiAct::Slot(i), Node { height: Val::Px(h), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::Center, row_gap: Val::Px(1.0), ..default() }, INSET);
+            let e = button(g, UiAct::Slot(i), Node { height: Val::Px(40.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::Center, row_gap: Val::Px(if shop { 0.0 } else { 1.0 }), ..default() }, INSET);
             if let Some(s) = s {
                 let c = rgb(item_color(&s.item));
                 g.commands().entity(e).with_children(|b| {
-                    b.spawn((Node { width: Val::Px(16.0), height: Val::Px(12.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(c), BorderColor::all(Color::BLACK), Pickable::IGNORE));
+                    b.spawn((Node { width: Val::Px(16.0), height: Val::Px(if shop { 5.0 } else { 12.0 }), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(c), BorderColor::all(Color::BLACK), Pickable::IGNORE));
                     let l = if s.qty > 1 { format!("{} x{}", short(&s.item), s.qty) } else { short(&s.item).to_string() };
-                    b.spawn(text(l, 11.0, TEXT));
+                    b.spawn(text(l, if shop { 10.0 } else { 11.0 }, TEXT));
                     // with the shop open: what she'd pay for one
                     if let Some(shop) = &sc.shop {
                         match shop.sell.get(&s.item).copied().unwrap_or(0) {
@@ -493,7 +494,7 @@ fn side_pack(p: &mut ChildSpawnerCommands, sc: &Scape) {
             }
         }
     });
-    let hint = if sc.shop.is_some() { "Click an item to sell one, right-click for more (Value, 5, 10, X, All)." } else { "Click an item to use it, right-click for options." };
+    let hint = if sc.shop.is_some() { "Click: sell one. Right-click: Value, 5, 10, X, All." } else { "Click an item to use it, right-click for options." };
     p.spawn(text(hint, 11.0, DIM)).insert(Node { margin: UiRect::top(Val::Px(4.0)), ..default() });
 }
 
