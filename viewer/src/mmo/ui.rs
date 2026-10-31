@@ -594,11 +594,18 @@ fn lamp_panel(p: &mut ChildSpawnerCommands, sc: &Scape) {
         f.spawn(text("Rub it on a skill. Memories that aren't yours flood in.", 12.0, DIM));
         f.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::flex(2, 1.0), column_gap: Val::Px(6.0), row_gap: Val::Px(6.0), ..default() }).with_children(|g| {
             for k in SKILLS {
-                let e = button(g, UiAct::Rub(k), Node { padding: UiRect::all(Val::Px(6.0)), flex_direction: FlexDirection::Column, ..default() }, INSET);
                 let lvl = sc.skills.level(k);
+                let node = Node { padding: UiRect::all(Val::Px(6.0)), flex_direction: FlexDirection::Column, border: UiRect::all(Val::Px(1.0)), ..default() };
+                // a maxed skill would only waste the lamp: shown, not clickable
+                let maxed = lvl >= MAX_LEVEL;
+                let e = if maxed { g.spawn((node, BackgroundColor(INSET), BorderColor::all(EDGE))).id() } else { button(g, UiAct::Rub(k), node, INSET) };
                 g.commands().entity(e).with_children(|b| {
-                    b.spawn(text(format!("{} ({lvl})", k.label()), 14.0, TEXT));
-                    b.spawn(text(format!("+{} xp", fmt_xp(lamp_xp(lvl))), 12.0, GOOD));
+                    b.spawn(text(format!("{} ({lvl})", k.label()), 14.0, if maxed { DIM } else { TEXT }));
+                    if maxed {
+                        b.spawn(text("maxed", 12.0, DIM));
+                    } else {
+                        b.spawn(text(format!("+{} xp", fmt_xp(lamp_xp(lvl))), 12.0, GOOD));
+                    }
                 });
             }
         });
@@ -915,7 +922,9 @@ pub fn overlays(
             } else {
                 TEXT
             };
-            if !covered(p) {
+            // the whole tag (up to two lines), not just its anchor, must stay clear of panels
+            let corners = [Vec2::new(-60.0, -22.0), Vec2::new(60.0, -22.0), Vec2::new(-60.0, 16.0), Vec2::new(60.0, 16.0), Vec2::ZERO];
+            if !corners.iter().any(|c| covered(p + *c)) {
                 want.push((format!("name{id}:{name}"), p - Vec2::new(70.0, 20.0), Ov::Tag(name, col)));
             }
         }
@@ -925,7 +934,7 @@ pub fn overlays(
                 continue;
             }
             let Ok(p) = camera.world_to_viewport(gt, a.pos + Vec3::Y * (a.height + if a.npc { 0.2 } else { 0.05 })) else { continue };
-            if !covered(p) {
+            if !covered(p - Vec2::new(20.0, 0.0)) && !covered(p + Vec2::new(20.0, 4.0)) {
                 want.push((key, p - Vec2::new(20.0, 4.0), Ov::Bar((a.hp as f32 / a.max as f32).clamp(0.0, 1.0))));
             }
         }

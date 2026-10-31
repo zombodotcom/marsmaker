@@ -2356,14 +2356,14 @@ fn cave_env(
                 f.directional_light_color = Color::NONE;
                 f.falloff = FogFalloff::Linear { start: 20.0, end: 85.0 };
             }
-            ambient.color = Color::srgb(0.45, 0.55, 0.85);
-            ambient.brightness = 170.0;
+            ambient.color = Color::srgb(0.75, 0.80, 0.95);
+            ambient.brightness = 150.0;
             clear.0 = Color::BLACK;
             // tuning: MM_LAMP="intensity,range"
             let (int, range) = std::env::var("MM_LAMP").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))).unwrap_or((2_500_000.0f32, 45.0f32));
             sv.lamp = Some(
                 commands
-                    .spawn((Headlamp, PointLight { color: Color::srgb(1.0, 0.92, 0.80), intensity: int, range, shadow_maps_enabled: false, ..default() }, Transform::default()))
+                    .spawn((Headlamp, PointLight { color: Color::srgb(1.0, 0.96, 0.90), intensity: int, range, shadow_maps_enabled: false, ..default() }, Transform::default()))
                     .id(),
             );
             *saved = Some(sv);

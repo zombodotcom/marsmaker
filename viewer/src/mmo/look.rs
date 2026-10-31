@@ -696,17 +696,16 @@ pub fn node(cx: &mut Ctx, kind: &str, at: Vec3, seed: u32) -> Entity {
 
 /// The lava tube's rock, floor and glowing lichen, under one root.
 pub fn cave(cx: &mut Ctx, map: &super::cave::CaveMap) -> Entity {
-    let (floor, rock, lichen) = super::cave::build_meshes(map);
-    let floor_m = cx.kit.mat(cx.mats, [0.30, 0.22, 0.19], 0.0, 0.95, 0.0);
-    let rock_m = cx.kit.mat(cx.mats, [0.17, 0.14, 0.14], 0.0, 0.9, 0.0);
-    let lichen_m = cx.glow([0.25, 0.95, 0.75], 4.0);
-    let (f, r, l) = (cx.meshes.add(floor), cx.meshes.add(rock), cx.meshes.add(lichen));
+    let m = super::cave::build_meshes(map);
+    // dusty pale floor, darker basalt walls (lit faces against dim tops), glowing lichen
+    let mats = [cx.kit.mat(cx.mats, [0.55, 0.48, 0.42], 0.0, 0.95, 0.0), cx.kit.mat(cx.mats, [0.40, 0.35, 0.33], 0.0, 0.85, 0.0), cx.glow([0.25, 0.95, 0.75], 4.0)];
+    let meshes = [m.floor, m.rock, m.lichen].map(|x| cx.meshes.add(x));
     cx.commands
         .spawn((Transform::default(), Visibility::default(), super::cave::CaveGeo))
         .with_children(|p| {
-            piece(p, f, floor_m, Transform::IDENTITY);
-            piece(p, r, rock_m, Transform::IDENTITY);
-            piece(p, l, lichen_m, Transform::IDENTITY);
+            for (mesh, mat) in meshes.into_iter().zip(mats) {
+                piece(p, mesh, mat, Transform::IDENTITY);
+            }
         })
         .id()
 }

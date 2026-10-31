@@ -18,15 +18,17 @@ pub const CAVE_W: usize = 120;
 pub const CAVE_H: usize = 120;
 /// rock walls this tall (plus bumps on top)
 pub const WALL_H: f32 = 2.6;
-/// heightfield samples per tile side
-const SUB: usize = 3;
+/// heightfield samples per tile side (mesh)
+const SUB: usize = 4;
+/// wall-field cells per tile side
+const FINE: usize = 4;
 
 pub struct CaveMap {
     pub w: usize,
     pub h: usize,
     /// 1 = floor, 0 = wall; index = tz * w + tx
     pub grid: Vec<u8>,
-    /// wall-ness per tile, blended with its neighbours (0 floor .. 1 rock)
+    /// wall-ness on a FINE x FINE lattice per tile, blurred (0 floor .. 1 rock)
     field: Vec<f32>,
     /// floor height (the tube sits far below the site's terrain)
     pub y0: f32,
@@ -68,37 +70,50 @@ fn noise(x: f32, z: f32) -> f32 {
 
 impl CaveMap {
     pub fn from_grid(w: usize, h: usize, grid: Vec<u8>, y0: f32) -> Self {
-        let mut field = vec![1.0f32; w * h];
-        let wall = |x: i32, z: i32| -> f32 {
-            if x < 0 || z < 0 || x >= w as i32 || z >= h as i32 { 1.0 } else if grid[z as usize * w + x as usize] == 1 { 0.0 } else { 1.0 }
-        };
-        for z in 0..h as i32 {
-            for x in 0..w as i32 {
-                let mut nb = 0.0;
-                for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
-                    nb += wall(x + dx, z + dz);
-                }
-                field[z as usize * w + x as usize] = 0.5 * wall(x, z) + 0.5 * nb / 8.0;
+        // wall-ness on a fine lattice (FINE cells per tile side): each cell takes its tile's value,
+        // then a gaussian blur rounds the tile grid's stair-steps into smooth walls
+        let (fw, fh) = (w * FINE, h * FINE);
+        let mut f = vec![1.0f32; fw * fh];
+        for j in 0..fh {
+            for i in 0..fw {
+                f[j * fw + i] = if grid[(j / FINE) * w + i / FINE] == 1 { 0.0 } else { 1.0 };
             }
         }
-        // a second, wider blur rounds the stair-steps of diagonal walls off; then floor centres are
-        // kept low and wall centres high, so the contour can't cross a tile it doesn't belong to
-        let f0 = field.clone();
-        let at = |x: i32, z: i32| if x < 0 || z < 0 || x >= w as i32 || z >= h as i32 { 1.0 } else { f0[z as usize * w + x as usize] };
-        for z in 0..h as i32 {
-            for x in 0..w as i32 {
-                let mut acc = 0.0;
-                for dz in -1..=1 {
-                    for dx in -1..=1 {
-                        let k = [0.25, 0.5, 0.25][(dx + 1) as usize] * [0.25, 0.5, 0.25][(dz + 1) as usize];
-                        acc += k * at(x + dx, z + dz);
-                    }
+        let sigma = 1.0 / (TILE_M / FINE as f32); // 1 m, in cells
+        let r = (sigma * 2.5).ceil() as i32;
+        let k: Vec<f32> = (-r..=r).map(|d| (-(d * d) as f32 / (2.0 * sigma * sigma)).exp()).collect();
+        let ks: f32 = k.iter().sum();
+        let mut tmp = vec![0.0f32; fw * fh];
+        for j in 0..fh {
+            for i in 0..fw {
+                let mut a = 0.0;
+                for (n, d) in (-r..=r).enumerate() {
+                    let x = i as i32 + d;
+                    a += k[n] * if x < 0 || x >= fw as i32 { 1.0 } else { f[j * fw + x as usize] };
                 }
-                let i = z as usize * w + x as usize;
-                field[i] = if grid[i] == 1 { acc.min(0.36) } else { acc.max(0.64) };
+                tmp[j * fw + i] = a / ks;
             }
         }
-        CaveMap { w, h, grid, field, y0 }
+        for j in 0..fh {
+            for i in 0..fw {
+                let mut a = 0.0;
+                for (n, d) in (-r..=r).enumerate() {
+                    let z = j as i32 + d;
+                    a += k[n] * if z < 0 || z >= fh as i32 { 1.0 } else { tmp[z as usize * fw + i] };
+                }
+                // the middle of every tile keeps its own side of the wall, so the contour can only
+                // bend through the outer half metre of a tile: what looks open is open
+                let (ci, cj) = (i % FINE, j % FINE);
+                let middle = (1..FINE - 1).contains(&ci) && (1..FINE - 1).contains(&cj);
+                let v = a / ks;
+                f[j * fw + i] = match (middle, grid[(j / FINE) * w + i / FINE] == 1) {
+                    (true, true) => v.min(0.3),
+                    (true, false) => v.max(0.7),
+                    _ => v,
+                };
+            }
+        }
+        CaveMap { w, h, grid, field: f, y0 }
     }
 
     /// From the server's run lengths (wall, floor, wall, ... starting with a wall run).
@@ -121,24 +136,27 @@ impl CaveMap {
         tx >= 0 && tz >= 0 && tx < self.w as i32 && tz < self.h as i32 && self.grid[tz as usize * self.w + tx as usize] == 1
     }
 
-    /// Wall-ness at a world point (bilinear between tile centres).
+    /// Wall-ness at a world point (bilinear between fine cell centres).
     fn field_at(&self, x: f32, z: f32) -> f32 {
-        let u = x / TILE_M - 0.5;
-        let v = z / TILE_M - 0.5;
+        let c = TILE_M / FINE as f32;
+        let (fw, fh) = ((self.w * FINE) as i32, (self.h * FINE) as i32);
+        let u = x / c - 0.5;
+        let v = z / c - 0.5;
         let (i0, j0) = (u.floor() as i32, v.floor() as i32);
         let (fu, fv) = (u - i0 as f32, v - j0 as f32);
-        let f = |i: i32, j: i32| if i < 0 || j < 0 || i >= self.w as i32 || j >= self.h as i32 { 1.0 } else { self.field[j as usize * self.w + i as usize] };
+        let f = |i: i32, j: i32| if i < 0 || j < 0 || i >= fw || j >= fh { 1.0 } else { self.field[(j * fw + i) as usize] };
         let a = f(i0, j0) * (1.0 - fu) + f(i0 + 1, j0) * fu;
         let b = f(i0, j0 + 1) * (1.0 - fu) + f(i0 + 1, j0 + 1) * fu;
         a * (1.0 - fv) + b * fv
     }
 
-    /// Height of the rock surface at a world point (floor = y0).
+    /// Height of the rock surface at a world point (floor = y0): flat floor, near-vertical faces,
+    /// lumpy tops.
     pub fn solid_h(&self, x: f32, z: f32) -> f32 {
         let f = self.field_at(x, z);
-        let rise = smoothstep(0.4, 0.6, f);
-        let top = smoothstep(0.65, 1.0, f);
-        self.y0 + rise * (WALL_H + 0.18 * noise(x * 1.3, z * 1.3)) + top * (0.9 + 0.7 * noise(x * 0.45, z * 0.45))
+        let rise = smoothstep(0.42, 0.58, f);
+        let top = smoothstep(0.62, 0.95, f);
+        self.y0 + rise * (WALL_H + 0.15 * noise(x * 1.3, z * 1.3)) + top * (0.8 + 0.7 * noise(x * 0.45, z * 0.45))
     }
 
     /// Tile centre on the floor.
@@ -153,20 +171,27 @@ impl CaveMap {
 #[derive(Component)]
 pub struct CaveGeo;
 
-/// Floor mesh and rock mesh (two materials, same vertices) plus glowing lichen on the walls.
-pub fn build_meshes(c: &CaveMap) -> (Mesh, Mesh, Mesh) {
+/// The tube's floor and rock (separate meshes for separate materials; the rock's own shading
+/// sets faces off from tops), plus glowing lichen on the walls.
+pub struct CaveMeshes {
+    pub floor: Mesh,
+    pub rock: Mesh,
+    pub lichen: Mesh,
+}
+
+pub fn build_meshes(c: &CaveMap) -> CaveMeshes {
     let (w, h) = (c.w, c.h);
     let (nx, nz) = (w * SUB + 1, h * SUB + 1);
     let step = TILE_M / SUB as f32;
-    // which tiles get rock drawn: within 2 tiles of a floor tile
+    // which tiles get rock drawn: within 5 tiles of a floor tile (deeper rock is never in view)
     let mut near = vec![false; w * h];
     for z in 0..h as i32 {
         for x in 0..w as i32 {
             if !c.floor_at(x, z) {
                 continue;
             }
-            for dz in -2..=2 {
-                for dx in -2..=2 {
+            for dz in -5..=5 {
+                for dx in -5..=5 {
                     let (a, b) = (x + dx, z + dz);
                     if a >= 0 && b >= 0 && a < w as i32 && b < h as i32 {
                         near[b as usize * w + a as usize] = true;
@@ -175,27 +200,34 @@ pub fn build_meshes(c: &CaveMap) -> (Mesh, Mesh, Mesh) {
             }
         }
     }
-    let mut pos = Vec::with_capacity(nx * nz);
     let mut hgt = Vec::with_capacity(nx * nz);
     for j in 0..nz {
         for i in 0..nx {
-            let (x, z) = (i as f32 * step, j as f32 * step);
-            let y = c.solid_h(x, z);
-            hgt.push(y);
-            pos.push([x, y, z]);
+            hgt.push(c.solid_h(i as f32 * step, j as f32 * step));
         }
     }
     let at = |i: usize, j: usize| hgt[j.min(nz - 1) * nx + i.min(nx - 1)];
-    let mut nrm = Vec::with_capacity(nx * nz);
-    for j in 0..nz {
-        for i in 0..nx {
-            let dx = at(i + 1, j) - at(i.saturating_sub(1), j);
-            let dz = at(i, j + 1) - at(i, j.saturating_sub(1));
-            nrm.push(Vec3::new(-dx, 2.0 * step, -dz).normalize().to_array());
-        }
+    // two meshes, each with only the vertices it uses
+    struct Part {
+        map: std::collections::HashMap<u32, u32>,
+        pos: Vec<[f32; 3]>,
+        nrm: Vec<[f32; 3]>,
+        idx: Vec<u32>,
     }
-    let uv: Vec<[f32; 2]> = pos.iter().map(|p| [p[0] * 0.1, p[2] * 0.1]).collect();
-    let (mut floor_i, mut rock_i) = (Vec::new(), Vec::new());
+    let mut parts: Vec<Part> = (0..2).map(|_| Part { map: Default::default(), pos: Vec::new(), nrm: Vec::new(), idx: Vec::new() }).collect();
+    let vert = |p: &mut Part, k: u32| -> u32 {
+        if let Some(&v) = p.map.get(&k) {
+            return v;
+        }
+        let (i, j) = (k as usize % nx, k as usize / nx);
+        let dx = at(i + 1, j) - at(i.saturating_sub(1), j);
+        let dz = at(i, j + 1) - at(i, j.saturating_sub(1));
+        let v = p.pos.len() as u32;
+        p.pos.push([i as f32 * step, hgt[k as usize], j as f32 * step]);
+        p.nrm.push(Vec3::new(-dx, 2.0 * step, -dz).normalize().to_array());
+        p.map.insert(k, v);
+        v
+    };
     for j in 0..nz - 1 {
         for i in 0..nx - 1 {
             let (tx, tz) = (i / SUB, j / SUB);
@@ -203,18 +235,27 @@ pub fn build_meshes(c: &CaveMap) -> (Mesh, Mesh, Mesh) {
                 continue;
             }
             let a = (j * nx + i) as u32;
-            let (b, cc, d) = (a + 1, a + nx as u32, a + nx as u32 + 1);
-            let flat = [a, b, cc, d].iter().all(|&k| hgt[k as usize] - c.y0 < 0.05);
-            let list = if flat { &mut floor_i } else { &mut rock_i };
-            list.extend_from_slice(&[a, cc, b, b, cc, d]);
+            let q = [a, a + 1, a + nx as u32, a + nx as u32 + 1];
+            // per triangle (finer floor/rock edge), split along the diagonal that follows the wall
+            let hs = q.map(|k| hgt[k as usize] - c.y0);
+            let tris = if (hs[0] - hs[3]).abs() < (hs[1] - hs[2]).abs() { [[0, 2, 3], [0, 3, 1]] } else { [[0, 2, 1], [1, 2, 3]] };
+            for t in tris {
+                let flat = t.iter().all(|&n| hs[n] < 0.04);
+                let p = &mut parts[if flat { 0 } else { 1 }];
+                for n in t {
+                    let v = vert(p, q[n]);
+                    p.idx.push(v);
+                }
+            }
         }
     }
-    let mk = |idx: Vec<u32>| {
+    let mk = |p: Part| {
+        let uv = vec![[0.0f32, 0.0]; p.pos.len()];
         Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos.clone())
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nrm.clone())
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv.clone())
-            .with_inserted_indices(Indices::U32(idx))
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, p.pos)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, p.nrm)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+            .with_inserted_indices(Indices::U32(p.idx))
     };
     // lichen: small glowing blobs low on the walls next to the floor
     let blob = Sphere::new(1.0).mesh().ico(0).unwrap();
@@ -264,7 +305,9 @@ pub fn build_meshes(c: &CaveMap) -> (Mesh, Mesh, Mesh) {
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, ln)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, luv)
         .with_inserted_indices(Indices::U32(li));
-    (mk(floor_i), mk(rock_i), lichen)
+    let mut it = parts.into_iter();
+    let (floor, rock) = (mk(it.next().unwrap()), mk(it.next().unwrap()));
+    CaveMeshes { floor, rock, lichen }
 }
 
 // ------------------------------------------------------------------------------------ offline generator
