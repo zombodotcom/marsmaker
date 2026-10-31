@@ -95,6 +95,23 @@ the void.
   server/PROTOCOL.md). `--mmo-server URL` / `?mmo=URL` picks another server; `offline` (or an
   unreachable server) plays an offline world that runs the same rules on your machine, with its
   own colonists. Your name and login token are remembered (config folder / localStorage).
+- **Lava tube**: a pit near the landing site leads down into a twisty tube under the site (its own
+  room, `<site>~cave`; the server sends the wall map). Glowworms (30) and Crystal Horrors (60), void
+  veins (Mining 45 -> void crystals) and fossil beds (Survey 40 -> ancient relics). Dark: your
+  headlamp, the glowing veins and lichen light it. The rock is built from the same wall grid the
+  path finder uses, so what looks open is open (`mmo/cave.rs`). The ladder takes you back up.
+- **Colony locker** next to the fabricator: 100 kinds of item, everything stacks. Click your pack
+  to put things in, click the locker to take them out (right-click for 5 / all).
+- **Trading**: right-click another player, *Trade with*. Both offer items, accept, then accept again
+  on the confirm screen. Any change resets both accepts.
+- **Quests**: left-click a colonist to talk. Eight jobs (kill, gather, make, deliver), one of them a
+  three-step story down the lava tube. Rewards: quest points, items, Insight Lamps (rub one on a
+  skill for XP) and the relic armour plans. Quest tab (F4) shows progress.
+- **Armour**: helmet, suit, shield and cape (chitin, iron, void, relic) from the fabricator; wear it
+  from the pack, take it off in the gear tab. It adds to your defence roll; you keep it when you die.
+- **Rift Surge**: every 20-30 minutes a big rift tears open near the landing site: a 2-minute
+  warning, three waves, then a Void Leviathan. Everyone who did 5% of its damage gets loot (void
+  crystals, maybe the Rift Blade or the Void Cape).
 - Creature looks are one table (`mmo/look.rs`, `ENEMY_LOOKS`) and their stats another
   (`mmo/proto.rs`, `CREATURES`).
 
@@ -105,11 +122,15 @@ the void.
 | Arrows, middle-drag | turn the camera; mouse wheel zooms; the N button faces north |
 | R or the orb | walk / run (run = 2 tiles a tick); Shift+click runs once |
 | Enter | type in chat, Enter sends |
-| F1 / F2 / F3 | pack / skills / gear tab |
+| F1 / F2 / F3 / F4 | pack / skills / gear / quest tab |
 | Esc | pause menu |
 
 Test hook: `--mmo-name NAME --mmo-script "wait:2,walk:6,3,act:regolith@8,tab:skills,shot:a.png,quit"`
 (steps in `mmo/mod.rs`, `ScriptRun`). With `--mmo-name` the run never reads or stores a login token.
+Steps for the newer features: `talk:ROLE`, `choose:ID|N`, `bank`, `deposit:SLOT[:all]`,
+`withdraw:IDX`, `pit`, `ladder`, `wear:SLOT`, `unwear:helmet`, `lamp:SLOT`, `rub:SLOT:SKILL`,
+`trade` (ask the nearest player), `offer:SLOT`, `accept`, `decline`, `surge:now|boss` (offline),
+`tab:quests`, `log`. `tools/mmo_partner.mjs` is a scripted second player for trade tests.
 
 Clicking goes by what's drawn: each rock, creature and astronaut gets a screen rectangle from its
 meshes' bounds at its current (moving) position, with a few pixels of slack for small or far ones

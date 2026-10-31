@@ -34,6 +34,8 @@ pub enum Limb {
     Shard(u8),
     /// a floater's body; `Part::k` is its rest height
     Hover,
+    /// worm body segment `i` (0 = head end); `animate` sways it sideways
+    Seg(u8),
 }
 
 #[derive(Component)]
@@ -219,6 +221,8 @@ pub enum Plan {
     Golem,
     /// floating tentacled eye cluster
     Floater,
+    /// segmented glowing worm
+    Worm,
 }
 
 /// How each creature kind looks. Names, levels and stats are in proto::CREATURES; a re-skin is
@@ -235,13 +239,18 @@ pub struct EnemyLook {
     /// glowing accents (bioluminescence, crystals, rim)
     pub glow: [f32; 3],
     pub eye: [f32; 3],
+    /// crystal spikes on the back (crawlers)
+    pub spikes: u8,
 }
 
 pub const ENEMY_LOOKS: &[EnemyLook] = &[
-    EnemyLook { kind: "skitter", plan: Plan::Crawler, scale: 0.8, height: 0.9, skin: [0.30, 0.12, 0.45], dark: [0.12, 0.05, 0.20], glow: [0.20, 0.95, 1.0], eye: [0.55, 1.0, 1.0] },
-    EnemyLook { kind: "stalker", plan: Plan::Quad, scale: 0.9, height: 1.3, skin: [0.78, 0.56, 0.36], dark: [0.42, 0.28, 0.18], glow: [0.35, 1.0, 0.75], eye: [0.45, 1.0, 0.8] },
-    EnemyLook { kind: "golem", plan: Plan::Golem, scale: 1.4, height: 2.9, skin: [0.22, 0.19, 0.19], dark: [0.12, 0.10, 0.11], glow: [0.70, 0.35, 1.0], eye: [0.80, 0.50, 1.0] },
-    EnemyLook { kind: "leviathan", plan: Plan::Floater, scale: 2.0, height: 6.0, skin: [0.12, 0.06, 0.20], dark: [0.06, 0.03, 0.10], glow: [0.60, 0.30, 1.0], eye: [1.0, 0.80, 0.35] },
+    EnemyLook { kind: "skitter", plan: Plan::Crawler, scale: 0.8, height: 0.9, skin: [0.30, 0.12, 0.45], dark: [0.12, 0.05, 0.20], glow: [0.20, 0.95, 1.0], eye: [0.55, 1.0, 1.0], spikes: 0 },
+    EnemyLook { kind: "stalker", plan: Plan::Quad, scale: 0.9, height: 1.3, skin: [0.78, 0.56, 0.36], dark: [0.42, 0.28, 0.18], glow: [0.35, 1.0, 0.75], eye: [0.45, 1.0, 0.8], spikes: 0 },
+    EnemyLook { kind: "golem", plan: Plan::Golem, scale: 1.4, height: 2.9, skin: [0.22, 0.19, 0.19], dark: [0.12, 0.10, 0.11], glow: [0.70, 0.35, 1.0], eye: [0.80, 0.50, 1.0], spikes: 0 },
+    EnemyLook { kind: "leviathan", plan: Plan::Floater, scale: 2.0, height: 6.0, skin: [0.12, 0.06, 0.20], dark: [0.06, 0.03, 0.10], glow: [0.60, 0.30, 1.0], eye: [1.0, 0.80, 0.35], spikes: 0 },
+    // lava-tube cave
+    EnemyLook { kind: "glowworm", plan: Plan::Worm, scale: 1.0, height: 0.9, skin: [0.20, 0.16, 0.12], dark: [0.10, 0.08, 0.07], glow: [0.55, 1.0, 0.35], eye: [0.75, 1.0, 0.5], spikes: 0 },
+    EnemyLook { kind: "crystal_horror", plan: Plan::Crawler, scale: 1.8, height: 2.0, skin: [0.62, 0.72, 0.80], dark: [0.18, 0.20, 0.26], glow: [0.30, 0.85, 1.0], eye: [1.0, 0.35, 0.85], spikes: 7 },
 ];
 
 pub fn enemy_look(kind: &str) -> &'static EnemyLook {
@@ -264,6 +273,7 @@ pub fn creature(cx: &mut Ctx, kind: &str, at: Vec3) -> Entity {
             let head = cx.m("k_head", || lowpoly(Sphere::new(0.18).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.1, 0.8, 1.0)));
             let spot = cx.m("k_spot", || lowpoly(Sphere::new(0.07).mesh().ico(0).unwrap()));
             let mandible = cx.m("k_mand", || lowpoly(Cone::new(0.04, 0.2)).rotated_by(Quat::from_rotation_x(-1.9)));
+            let crystal = cx.m("k_crystal", || lowpoly(Cone::new(0.07, 0.42)).translated_by(Vec3::new(0.0, 0.21, 0.0)));
             // a leg: out to the side and down to the ground, pivoting at the body
             let leg = cx.m("k_leg", || {
                 let upper = lowpoly(Cuboid::new(0.42, 0.06, 0.06)).translated_by(Vec3::new(0.21, 0.0, 0.0)).rotated_by(Quat::from_rotation_z(0.55));
@@ -285,6 +295,11 @@ pub fn creature(cx: &mut Ctx, kind: &str, at: Vec3) -> Entity {
                             piece(c, mandible.clone(), dark.clone(), Transform::from_xyz(0.07 * sx, -0.06, -0.14));
                         }
                     });
+                    for k in 0..lk.spikes {
+                        let a = k as f32 * 2.4;
+                        let (x, z) = (a.cos() * 0.16, -0.25 + k as f32 * 0.09);
+                        piece(p, crystal.clone(), glow.clone(), Transform::from_xyz(x, 0.58, z).with_rotation(Quat::from_rotation_z(a.cos() * 0.5) * Quat::from_rotation_x(0.35 - k as f32 * 0.1)).with_scale(Vec3::splat(0.7 + (k % 3) as f32 * 0.25)));
+                    }
                     for i in 0..6u8 {
                         let side = if i % 2 == 0 { -1.0 } else { 1.0 };
                         let z = -0.3 + (i / 2) as f32 * 0.3;
@@ -357,6 +372,33 @@ pub fn creature(cx: &mut Ctx, kind: &str, at: Vec3) -> Entity {
                     }
                     for i in 0..5u8 {
                         p.spawn((Mesh3d(shard.clone()), MeshMaterial3d(glow.clone()), Transform::from_xyz(0.0, 1.4, 0.0), Part { limb: Limb::Shard(i), rest: Quat::IDENTITY, k: 0.0 }));
+                    }
+                });
+            });
+        }
+        Plan::Worm => {
+            let seg = cx.m("w_seg", || lowpoly(Sphere::new(0.3).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 0.8, 1.15)));
+            let spot = cx.m("k_spot", || lowpoly(Sphere::new(0.07).mesh().ico(0).unwrap()));
+            let fang = cx.m("w_fang", || lowpoly(Cone::new(0.035, 0.18)).rotated_by(Quat::from_rotation_x(-1.6)));
+            cx.commands.entity(root).with_children(|r| {
+                r.spawn((Transform::from_scale(Vec3::splat(s)), Visibility::default())).with_children(|p| {
+                    for i in 0..7u8 {
+                        let k = i as f32;
+                        let sz = if i == 0 { 1.1 } else { 1.0 - k * 0.09 };
+                        let z = -0.62 + k * 0.4;
+                        p.spawn((Mesh3d(seg.clone()), MeshMaterial3d(skin.clone()), Transform::from_xyz(0.0, 0.3 * sz, z).with_scale(Vec3::splat(sz)), Visibility::default(), Part { limb: Limb::Seg(i), rest: Quat::IDENTITY, k: z }))
+                            .with_children(|c| {
+                                // a glowing band on every segment, eyes and fangs on the head
+                                for (x, y) in [(0.0, 0.24), (0.2, 0.12), (-0.2, 0.12)] {
+                                    piece(c, spot.clone(), glow.clone(), Transform::from_xyz(x, y, 0.0).with_scale(Vec3::splat(1.2)));
+                                }
+                                if i == 0 {
+                                    for sx in [-1.0, 1.0] {
+                                        piece(c, eyem.clone(), eye.clone(), Transform::from_xyz(0.12 * sx, 0.1, -0.3).with_scale(Vec3::splat(1.6)));
+                                        piece(c, fang.clone(), dark.clone(), Transform::from_xyz(0.08 * sx, -0.08, -0.32));
+                                    }
+                                }
+                            });
                     }
                 });
             });
@@ -451,6 +493,100 @@ pub fn node(cx: &mut Ctx, kind: &str, at: Vec3, seed: u32) -> Entity {
                 }
                 full.push((slab.clone(), m, tr));
             }
+        }
+        "void_vein" => {
+            let basalt = cx.c([0.16, 0.14, 0.15]);
+            let crystal = cx.glow([0.62, 0.32, 1.0], 6.0);
+            let crystal2 = cx.glow([0.30, 0.80, 1.0], 5.0);
+            let spike = cx.m("v_spike", || lowpoly(Cone::new(0.11, 0.7)).translated_by(Vec3::new(0.0, 0.35, 0.0)));
+            full.push((rock.clone(), basalt.clone(), Transform::from_xyz(0.0, 0.2, 0.0).with_scale(Vec3::new(1.5, 0.9, 1.3))));
+            for i in 0..7 {
+                let a = i as f32 * 0.9 + seed as f32;
+                let tilt = Quat::from_rotation_z(0.5 * a.cos()) * Quat::from_rotation_x(0.5 * a.sin());
+                let m = if i % 3 == 0 { crystal2.clone() } else { crystal.clone() };
+                full.push((spike.clone(), m, Transform::from_xyz(a.cos() * 0.4, 0.35 + 0.1 * (i % 2) as f32, a.sin() * 0.35).with_rotation(tilt).with_scale(Vec3::splat(0.7 + 0.15 * (i % 3) as f32))));
+            }
+            empty.push((rock.clone(), basalt, Transform::from_xyz(0.0, 0.15, 0.0).with_scale(Vec3::new(1.4, 0.7, 1.2))));
+            cx.commands.entity(root).with_children(|p| {
+                p.spawn((PointLight { color: Color::srgb(0.65, 0.4, 1.0), intensity: 60_000.0, range: 7.0, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, 1.2, 0.0)));
+            });
+        }
+        "fossil" => {
+            let stone = cx.c([0.62, 0.56, 0.46]);
+            let glyph = cx.glow([1.0, 0.75, 0.30], 3.0);
+            let ring = cx.m("fo_ring", || lowpoly(Torus::new(0.05, 0.11).mesh().minor_resolution(4).major_resolution(10)));
+            full.push((slab.clone(), stone.clone(), Transform::from_xyz(0.0, 0.16, 0.0).with_scale(Vec3::new(1.0, 1.0, 1.1))));
+            full.push((slab.clone(), stone.clone(), Transform::from_xyz(0.1, 0.42, -0.05).with_scale(Vec3::new(0.75, 0.8, 0.8)).with_rotation(Quat::from_rotation_z(0.08))));
+            // a spiral of shell rings: the old Martians' glyph
+            for i in 0..5 {
+                let k = i as f32;
+                full.push((ring.clone(), glyph.clone(), Transform::from_xyz(-0.15 + k * 0.08, 0.6, -0.05 + k * 0.02).with_scale(Vec3::splat(0.6 + k * 0.45))));
+            }
+            empty.push((slab.clone(), stone, Transform::from_xyz(0.0, 0.16, 0.0)));
+            cx.commands.entity(root).with_children(|p| {
+                p.spawn((PointLight { color: Color::srgb(1.0, 0.75, 0.35), intensity: 25_000.0, range: 5.0, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, 1.0, 0.0)));
+            });
+        }
+        "locker" => {
+            let body = cx.shiny([0.52, 0.55, 0.60]);
+            let dark = cx.c([0.20, 0.21, 0.24]);
+            let lamp = cx.glow([0.3, 1.0, 0.45], 4.0);
+            let cab = cx.m("lk_cab", || lowpoly(Cuboid::new(1.3, 1.9, 0.75)));
+            let door = cx.m("lk_door", || lowpoly(Cuboid::new(0.6, 1.7, 0.04)));
+            let handle = cx.m("lk_handle", || lowpoly(Cuboid::new(0.05, 0.3, 0.06)));
+            let strip = cx.m("lk_strip", || lowpoly(Cuboid::new(1.0, 0.07, 0.03)));
+            cx.commands.entity(root).with_children(|p| {
+                piece(p, cab, body.clone(), Transform::from_xyz(0.0, 0.95, 0.0));
+                for x in [-0.31f32, 0.31] {
+                    piece(p, door.clone(), dark.clone(), Transform::from_xyz(x, 0.95, -0.39));
+                    piece(p, handle.clone(), body.clone(), Transform::from_xyz(x * 0.4, 0.95, -0.43));
+                }
+                piece(p, strip, lamp, Transform::from_xyz(0.0, 1.75, -0.42));
+            });
+            return root;
+        }
+        "pit" => {
+            let hole = cx.kit.mat(cx.mats, [0.01, 0.01, 0.01], 0.0, 1.0, 0.0);
+            let rim = cx.c([0.30, 0.20, 0.16]);
+            let wood = cx.c([0.45, 0.32, 0.20]);
+            let lamp = cx.glow([1.0, 0.65, 0.2], 6.0);
+            let disc = cx.m("p_hole", || lowpoly(Cylinder::new(1.15, 0.06).mesh().resolution(14)));
+            let post = cx.m("p_post", || lowpoly(Cuboid::new(0.1, 1.9, 0.1)));
+            let beam = cx.m("p_beam", || lowpoly(Cuboid::new(1.9, 0.1, 0.1)));
+            let rope = cx.m("p_rope", || lowpoly(Cuboid::new(0.04, 1.4, 0.04)));
+            cx.commands.entity(root).with_children(|p| {
+                piece(p, disc, hole, Transform::from_xyz(0.0, 0.05, 0.0));
+                for i in 0..9 {
+                    let a = i as f32 * 0.7;
+                    piece(p, rock.clone(), rim.clone(), Transform::from_xyz(a.cos() * 1.3, 0.05, a.sin() * 1.3).with_scale(Vec3::new(0.6, 0.35, 0.5)));
+                }
+                // a winch frame over the hole, a rope going down, a lamp
+                for x in [-0.95f32, 0.95] {
+                    piece(p, post.clone(), wood.clone(), Transform::from_xyz(x, 0.95, 0.0));
+                }
+                piece(p, beam, wood.clone(), Transform::from_xyz(0.0, 1.9, 0.0));
+                piece(p, rope, wood, Transform::from_xyz(0.0, 1.2, 0.0));
+                piece(p, bead.clone(), lamp, Transform::from_xyz(0.95, 2.0, 0.0).with_scale(Vec3::splat(1.6)));
+            });
+            return root;
+        }
+        "ladder" => {
+            let metal = cx.shiny([0.55, 0.52, 0.48]);
+            let beam = cx.glow([1.0, 0.78, 0.45], 1.6);
+            let rail = cx.m("ld_rail", || lowpoly(Cuboid::new(0.07, 6.0, 0.07)));
+            let rung = cx.m("ld_rung", || lowpoly(Cuboid::new(0.6, 0.05, 0.05)));
+            cx.commands.entity(root).with_children(|p| {
+                for x in [-0.3f32, 0.3] {
+                    piece(p, rail.clone(), metal.clone(), Transform::from_xyz(x, 3.0, 0.0));
+                }
+                for i in 0..14 {
+                    piece(p, rung.clone(), metal.clone(), Transform::from_xyz(0.0, 0.3 + i as f32 * 0.42, 0.0));
+                }
+                // daylight from the pit above: a warm glow at the top of the ladder and below it
+                piece(p, bead.clone(), beam, Transform::from_xyz(0.0, 6.05, 0.0).with_scale(Vec3::splat(2.5)));
+                p.spawn((PointLight { color: Color::srgb(1.0, 0.82, 0.6), intensity: 500_000.0, range: 18.0, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, 4.5, 0.0)));
+            });
+            return root;
         }
         "fabricator" => {
             let grey = cx.c([0.62, 0.62, 0.64]);
@@ -556,6 +692,98 @@ pub fn node(cx: &mut Ctx, kind: &str, at: Vec3, seed: u32) -> Entity {
         });
     });
     root
+}
+
+/// The lava tube's rock, floor and glowing lichen, under one root.
+pub fn cave(cx: &mut Ctx, map: &super::cave::CaveMap) -> Entity {
+    let (floor, rock, lichen) = super::cave::build_meshes(map);
+    let floor_m = cx.kit.mat(cx.mats, [0.30, 0.22, 0.19], 0.0, 0.95, 0.0);
+    let rock_m = cx.kit.mat(cx.mats, [0.17, 0.14, 0.14], 0.0, 0.9, 0.0);
+    let lichen_m = cx.glow([0.25, 0.95, 0.75], 4.0);
+    let (f, r, l) = (cx.meshes.add(floor), cx.meshes.add(rock), cx.meshes.add(lichen));
+    cx.commands
+        .spawn((Transform::default(), Visibility::default(), super::cave::CaveGeo))
+        .with_children(|p| {
+            piece(p, f, floor_m, Transform::IDENTITY);
+            piece(p, r, rock_m, Transform::IDENTITY);
+            piece(p, l, lichen_m, Transform::IDENTITY);
+        })
+        .id()
+}
+
+/// Armour worn on an astronaut (respawned when the gear changes).
+#[derive(Component)]
+pub struct ArmourPiece;
+
+/// Put `gear` on the astronaut `root` (its left arm `arm_l` carries the shield).
+pub fn dress(cx: &mut Ctx, root: Entity, arm_l: Option<Entity>, gear: &super::proto::Gear) {
+    let tier = |item: &str| -> ([f32; 3], f32) {
+        if item.starts_with("chitin") {
+            ([0.40, 0.58, 0.48], 0.0)
+        } else if item.starts_with("iron") {
+            ([0.56, 0.58, 0.63], 0.0)
+        } else {
+            ([0.92, 0.70, 0.26], 1.0)
+        }
+    };
+    let mut parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)> = Vec::new();
+    if let Some(h) = &gear.helmet {
+        let (c, relic) = tier(h);
+        let mat = if relic > 0.0 { cx.kit.mat(cx.mats, c, 0.0, 0.3, 0.7) } else { cx.shiny(c) };
+        let shell = cx.m("ar_helm", || lowpoly(Sphere::new(0.27).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 0.75, 1.0)));
+        let crest = cx.m("ar_crest", || lowpoly(Cuboid::new(0.06, 0.12, 0.42)));
+        parts.push((shell, mat.clone(), Transform::from_xyz(0.0, 1.8, 0.02)));
+        parts.push((crest, mat, Transform::from_xyz(0.0, 1.98, 0.02)));
+        if relic > 0.0 {
+            let band = cx.m("ar_band", || lowpoly(Torus::new(0.25, 0.28).mesh().minor_resolution(4).major_resolution(12)));
+            let glow = cx.glow([1.0, 0.8, 0.35], 5.0);
+            parts.push((band, glow, Transform::from_xyz(0.0, 1.74, 0.0)));
+        }
+    }
+    if let Some(s) = &gear.suit {
+        let (c, relic) = tier(s);
+        let mat = if relic > 0.0 { cx.kit.mat(cx.mats, c, 0.0, 0.3, 0.7) } else { cx.shiny(c) };
+        let plate = cx.m("ar_plate", || lowpoly(Cuboid::new(0.56, 0.46, 0.4)));
+        let pad = cx.m("ar_pad", || lowpoly(Sphere::new(0.15).mesh().ico(0).unwrap()).scaled_by(Vec3::new(1.2, 0.7, 1.0)));
+        let belt = cx.m("ar_belt", || lowpoly(Cuboid::new(0.55, 0.08, 0.38)));
+        parts.push((plate, mat.clone(), Transform::from_xyz(0.0, 1.24, -0.01)));
+        parts.push((pad.clone(), mat.clone(), Transform::from_xyz(-0.36, 1.5, 0.0)));
+        parts.push((pad, mat.clone(), Transform::from_xyz(0.36, 1.5, 0.0)));
+        parts.push((belt, mat, Transform::from_xyz(0.0, 0.9, 0.0)));
+        if relic > 0.0 {
+            let glyph = cx.m("ar_glyph", || lowpoly(Cuboid::new(0.05, 0.3, 0.02)));
+            let glow = cx.glow([1.0, 0.8, 0.35], 5.0);
+            for x in [-0.12f32, 0.0, 0.12] {
+                parts.push((glyph.clone(), glow.clone(), Transform::from_xyz(x, 1.25, -0.215)));
+            }
+        }
+    }
+    if gear.cape.is_some() {
+        let cape = cx.m("ar_cape", || lowpoly(Cuboid::new(0.6, 1.05, 0.03)));
+        let star = cx.m("ar_star", || lowpoly(Cuboid::new(0.04, 0.04, 0.01)));
+        let cloth = cx.c([0.28, 0.10, 0.45]);
+        let glow = cx.glow([0.8, 0.7, 1.0], 6.0);
+        parts.push((cape, cloth, Transform::from_xyz(0.0, 1.0, 0.42).with_rotation(Quat::from_rotation_x(-0.12))));
+        for i in 0..6 {
+            let (x, y) = (((i * 37) % 5) as f32 * 0.1 - 0.2, 0.6 + ((i * 53) % 7) as f32 * 0.12);
+            parts.push((star.clone(), glow.clone(), Transform::from_xyz(x, y, 0.445).with_rotation(Quat::from_rotation_x(-0.12))));
+        }
+    }
+    cx.commands.entity(root).with_children(|p| {
+        for (m, mat, t) in parts {
+            p.spawn((Mesh3d(m), MeshMaterial3d(mat), t, ArmourPiece));
+        }
+    });
+    if let (Some(_), Some(arm)) = (&gear.shield, arm_l) {
+        let disc = cx.m("ar_shield", || lowpoly(Cylinder::new(0.3, 0.05).mesh().resolution(6)).rotated_by(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)));
+        let rim = cx.m("ar_srim", || lowpoly(Torus::new(0.27, 0.32).mesh().minor_resolution(4).major_resolution(6)).rotated_by(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)));
+        let core = cx.glow([0.35, 0.85, 1.0], 4.0);
+        let frame = cx.shiny([0.5, 0.52, 0.58]);
+        cx.commands.entity(arm).with_children(|p| {
+            p.spawn((Mesh3d(disc), MeshMaterial3d(core), Transform::from_xyz(-0.13, -0.4, 0.0), ArmourPiece));
+            p.spawn((Mesh3d(rim), MeshMaterial3d(frame), Transform::from_xyz(-0.14, -0.4, 0.0), ArmourPiece));
+        });
+    }
 }
 
 /// The yellow (walk) / red (action) click cross.

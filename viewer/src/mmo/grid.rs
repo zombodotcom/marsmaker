@@ -2,12 +2,15 @@
 //! A tile is walkable when the ground under it has data and its slope is at most `MAX_SLOPE_DEG`;
 //! node tiles (rocks, fabricator, rifts) are blocked on top. A* over 8 neighbours (no corner
 //! cutting), capped at `MAX_PATH` steps, falls back to the closest reachable tile.
+//! In the lava tube the grid is the cave's floor/wall map instead (cave.rs).
 
+use super::cave::CaveMap;
 use super::proto::{MAX_PATH, TILE_M};
 use crate::terrain::Site;
 use bevy::math::{IVec2, Vec3};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
 
 pub const MAX_SLOPE_DEG: f32 = 30.0;
 const CHUNK: i32 = 32;
@@ -19,7 +22,8 @@ struct Cell {
 }
 
 pub struct WalkGrid {
-    site: Site,
+    site: Option<Site>,
+    cave: Option<Arc<CaveMap>>,
     chunks: HashMap<IVec2, Box<[Cell]>>,
     pub blocked: HashSet<IVec2>,
     /// inclusive tile bounds of the site
@@ -41,15 +45,25 @@ impl WalkGrid {
         let x1 = site.east0 + (site.w as f32 - 1.0) * site.mpp;
         let z0 = -site.north0;
         let z1 = -site.north0 + (site.h as f32 - 1.0) * site.mpp;
-        WalkGrid { site: site.clone(), chunks: HashMap::new(), blocked: HashSet::new(), min: tile_of(x0, z0), max: tile_of(x1, z1) }
+        WalkGrid { site: Some(site.clone()), cave: None, chunks: HashMap::new(), blocked: HashSet::new(), min: tile_of(x0, z0), max: tile_of(x1, z1) }
+    }
+
+    /// The lava tube: floor tiles walk, wall tiles don't.
+    pub fn new_cave(c: Arc<CaveMap>) -> Self {
+        let max = IVec2::new(c.w as i32 - 1, c.h as i32 - 1);
+        WalkGrid { site: None, cave: Some(c), chunks: HashMap::new(), blocked: HashSet::new(), min: IVec2::ZERO, max }
     }
 
     fn cell(&mut self, t: IVec2) -> Cell {
         if t.x < self.min.x || t.y < self.min.y || t.x > self.max.x || t.y > self.max.y {
             return Cell { h: f32::NAN, walk: false };
         }
+        if let Some(cv) = &self.cave {
+            let walk = cv.floor_at(t.x, t.y);
+            return Cell { h: if walk { cv.y0 } else { cv.y0 + 3.0 }, walk };
+        }
         let c = IVec2::new(t.x.div_euclid(CHUNK), t.y.div_euclid(CHUNK));
-        let site = &self.site;
+        let Some(site) = &self.site else { return Cell { h: f32::NAN, walk: false } };
         let chunk = self.chunks.entry(c).or_insert_with(|| {
             let mut v = Vec::with_capacity((CHUNK * CHUNK) as usize);
             for j in 0..CHUNK {
@@ -79,8 +93,11 @@ impl WalkGrid {
 
     /// World point on the ground at a tile centre.
     pub fn world(&mut self, t: IVec2) -> Option<Vec3> {
+        if let Some(cv) = &self.cave {
+            return Some(cv.world(t));
+        }
         let (x, z) = tile_center(t);
-        self.site.height(x, z).map(|h| Vec3::new(x, h, z))
+        self.site.as_ref()?.height(x, z).map(|h| Vec3::new(x, h, z))
     }
 
     fn step_ok(&mut self, a: IVec2, d: IVec2) -> bool {
@@ -163,8 +180,74 @@ impl WalkGrid {
             return Vec::new();
         }
         path.reverse();
+        let mut path = self.straighten(from, &path);
         path.truncate(MAX_PATH);
         path
+    }
+
+    /// String-pull an A* path: from each point, jump to the farthest later point a straight
+    /// (Bresenham, 8-neighbour) line reaches through open tiles. Never more steps than before, and
+    /// corridors come out as straight runs instead of zig-zags.
+    fn straighten(&mut self, from: IVec2, path: &[IVec2]) -> Vec<IVec2> {
+        let mut out = Vec::with_capacity(path.len());
+        let (mut cur, mut i) = (from, 0);
+        while i < path.len() {
+            let mut best = None;
+            for j in (i + 1..path.len()).rev() {
+                if let Some(l) = self.line(cur, path[j]) {
+                    best = Some((j, l));
+                    break;
+                }
+            }
+            match best {
+                Some((j, l)) => {
+                    out.extend(l);
+                    cur = path[j];
+                    i = j + 1;
+                }
+                None => {
+                    out.push(path[i]);
+                    cur = path[i];
+                    i += 1;
+                }
+            }
+        }
+        out
+    }
+
+    /// Bresenham steps from `a` (excluded) to `b`, if every step is open.
+    fn line(&mut self, a: IVec2, b: IVec2) -> Option<Vec<IVec2>> {
+        let d = b - a;
+        let (ax, az) = (d.x.abs(), d.y.abs());
+        let (sx, sz) = (d.x.signum(), d.y.signum());
+        let n = ax.max(az);
+        let mut v = Vec::with_capacity(n as usize);
+        let mut p = a;
+        let mut err = 0;
+        for _ in 0..n {
+            let mut step = IVec2::ZERO;
+            if ax >= az {
+                step.x = sx;
+                err += az;
+                if 2 * err >= ax {
+                    err -= ax;
+                    step.y = sz;
+                }
+            } else {
+                step.y = sz;
+                err += ax;
+                if 2 * err >= az {
+                    err -= az;
+                    step.x = sx;
+                }
+            }
+            if !self.step_ok(p, step) {
+                return None;
+            }
+            p += step;
+            v.push(p);
+        }
+        Some(v)
     }
 
     /// Nearest walkable tile to `t` (spiral search), for spawns.

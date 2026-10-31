@@ -3,11 +3,15 @@
 //! client sends `C2S` through `handle` and receives `S2C` from `update`, exactly as online.
 //! Colonist bots live here too: a quartermaster with a starter gift, a guard who joins your fights
 //! (say "help" or "follow me" for an escort, "stop" to release it), a medic, a miner and a surveyor.
+//! They hand out the same quests as on the server. Also offline: the colony locker, armour, Insight
+//! Lamps, the lava tube under the site (the same generator as the server, cave.rs) and Rift Surges.
+//! Trading needs another player, so it's online only.
 
+use super::cave;
 use super::grid::WalkGrid;
 use super::proto::*;
 use bevy::math::IVec2;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 const ME: u32 = 1;
 
@@ -17,6 +21,10 @@ enum Task {
     Gather(u32),
     Craft(&'static Recipe, u32),
     Attack(u32),
+    /// a locker / pit / ladder, used when the walk ends next to it
+    Use(u32),
+    /// walk up to a colonist, then talk
+    Talk(u32),
 }
 
 struct P {
@@ -35,6 +43,7 @@ struct P {
     anim: u8,
     sent: Option<(IVec2, u8)>,
     bot: Option<Bot>,
+    gear: Gear,
 }
 
 struct Bot {
@@ -66,7 +75,37 @@ struct M {
     dead_until: Option<u64>,
     anim: u8,
     sent: Option<(IVec2, u8, i32)>,
+    /// a Rift Surge creature: removed when it dies instead of respawning
+    temp: bool,
 }
+
+/// The surface while you're down the lava tube.
+struct Stash {
+    players: Vec<P>,
+    nodes: Vec<N>,
+    npcs: Vec<M>,
+    spawn: IVec2,
+}
+
+/// Rift Surge state (as the server: warning, three waves, the boss, loot).
+#[derive(Default)]
+struct Surge {
+    /// 0 idle, 1 warning, 2 open, 3 boss
+    phase: u8,
+    next: u64,
+    until: u64,
+    wave: usize,
+    spot: IVec2,
+    boss: Option<u32>,
+    /// damage you did to the boss
+    dmg: i32,
+    count: u32,
+}
+
+const SURGE_WARN: u64 = 200;
+const SURGE_WAVE_GAP: u64 = 20;
+const SURGE_BOSS: u64 = 600;
+const SURGE_WAVES: [&[(&str, usize)]; 3] = [&[("skitter", 4)], &[("skitter", 2), ("stalker", 2)], &[("stalker", 2), ("golem", 1)]];
 
 pub struct Sim {
     tick_ms: u32,
@@ -82,6 +121,20 @@ pub struct Sim {
     /// quartermaster's greeting (tick) and one-time starter gift
     greet_at: Option<u64>,
     gift_given: bool,
+    site: String,
+    bank: Vec<Slot>,
+    quests: HashMap<String, QuestSt>,
+    /// open dialog: colonist id, offered quest, option ids
+    dialog: Option<(u32, Option<&'static str>, Vec<String>)>,
+    stash: Option<Stash>,
+    /// down the lava tube: the surface is stashed
+    in_cave: bool,
+    /// died down there: come up at the landing site, not the pit
+    up_at_spawn: bool,
+    /// don't tick until the client has the welcome for a new room
+    hold: bool,
+    surge: Surge,
+    next_temp: u32,
 }
 
 /// Colonists: name, role.
@@ -120,7 +173,30 @@ impl Sim {
         for b in site_name.bytes() {
             seed = (seed ^ b as u64).wrapping_mul(0x100_0000_01B3);
         }
-        let mut s = Sim { tick_ms: 600, n: 0, acc: 0.0, spawn, players: Vec::new(), nodes: Vec::new(), npcs: Vec::new(), rng: seed | 1, out: Vec::new(), joined: false, greet_at: None, gift_given: false };
+        let mut s = Sim {
+            tick_ms: 600,
+            n: 0,
+            acc: 0.0,
+            spawn,
+            players: Vec::new(),
+            nodes: Vec::new(),
+            npcs: Vec::new(),
+            rng: seed | 1,
+            out: Vec::new(),
+            joined: false,
+            greet_at: None,
+            gift_given: false,
+            site: site_name.to_string(),
+            bank: Vec::new(),
+            quests: HashMap::new(),
+            dialog: None,
+            stash: None,
+            in_cave: false,
+            up_at_spawn: false,
+            hold: false,
+            surge: Surge::default(),
+            next_temp: 1000,
+        };
         s.place_world(grid);
         s
     }
@@ -140,6 +216,9 @@ impl Sim {
         // the fabricator (node 0) a few tiles from spawn, as on the server
         let fab = grid.nearest_walkable(self.spawn + IVec2::new(3, 3), 4).unwrap_or(self.spawn + IVec2::new(3, 3));
         let mut taken: Vec<IVec2> = vec![self.spawn, fab];
+        // the colony locker two tiles from the fabricator
+        let locker = grid.nearest_walkable(fab + IVec2::new(-2, 0), 3).filter(|t| *t != self.spawn && *t != fab);
+        taken.extend(locker);
         let mut place = |s: &mut Sim, grid: &mut WalkGrid, rmin: i32, rmax: i32| -> Option<IVec2> {
             for _ in 0..200 {
                 let a = s.rand() * std::f64::consts::TAU;
@@ -173,9 +252,16 @@ impl Sim {
                 for j in 0..*per {
                     mid += 1;
                     let home = grid.nearest_walkable(t + IVec2::new(j as i32 - 1, 1), 3).unwrap_or(t);
-                    self.npcs.push(M { id: mid, def, home, tile: home, hp: def.hp, target: None, cd: 0, dead_until: None, anim: anim::IDLE, sent: None });
+                    self.npcs.push(M { id: mid, def, home, tile: home, hp: def.hp, target: None, cd: 0, dead_until: None, anim: anim::IDLE, sent: None, temp: false });
                 }
             }
+        }
+        // the pit down into the lava tube, further out
+        if let Some(t) = locker {
+            nodes.push(("locker", t));
+        }
+        if let Some(t) = place(self, grid, 10, 30) {
+            nodes.push(("pit", t));
         }
         for (i, (kind, t)) in nodes.into_iter().enumerate() {
             if kind != "rift" {
@@ -214,6 +300,7 @@ impl Sim {
                 anim: anim::IDLE,
                 sent: None,
                 bot: Some(Bot { role, next_chat, idle: 0, follow_until: 0, heal_at: 0 }),
+                gear: Gear::default(),
             });
         }
     }
@@ -290,15 +377,15 @@ impl Sim {
                 if n < b.heal_at || !near(&self.players[m], 2) {
                     continue;
                 }
-                self.players[m].bot.as_mut().unwrap().heal_at = n + 12;
+                self.players[m].bot.as_mut().unwrap().heal_at = n + 8;
                 self.players[m].anim = anim::CRAFT;
                 let p = &mut self.players[me];
-                p.hp = (p.hp + 10).min(max);
+                p.hp = (p.hp + 5).min(max);
                 let hp = p.hp;
                 self.say_as(m, "Hold still... there. Patched you up.");
-                self.out.push(S2C::Heal { src: Who::P(self.players[m].id).fmt(), dst: Who::P(ME).fmt(), amt: 10 });
+                self.out.push(S2C::Heal { src: Who::P(self.players[m].id).fmt(), dst: Who::P(ME).fmt(), amt: 5 });
                 self.out.push(S2C::Hp { hp, max });
-                self.out.push(S2C::Msg { text: "Doc Hollis heals you (+10 hitpoints).".into() });
+                self.out.push(S2C::Msg { text: "Doc Hollis heals you (+5 hitpoints).".into() });
             }
         }
     }
@@ -328,24 +415,14 @@ impl Sim {
                 let hp = skills.level(Skill::Hitpoints) as i32;
                 let mut inv = new_inv();
                 inv[0] = Some(Slot { item: "pistol".into(), qty: 1 });
-                self.players.insert(0, P { id: ME, name: name.clone(), tile, path: VecDeque::new(), run: false, task: Task::None, timer: 0, skills: skills.clone(), inv: inv.clone(), weapon: None, hp, cd: 0, anim: anim::IDLE, sent: None, bot: None });
-                let players = self
-                    .players
-                    .iter()
-                    .map(|p| PlayerInfo { id: p.id, name: p.name.clone(), tx: p.tile.x, tz: p.tile.y, bot: p.bot.is_some(), role: p.bot.as_ref().map(|b| b.role.to_string()) })
-                    .collect();
-                let nodes = self.nodes.iter().map(|n| NodeInfo { id: n.id, kind: n.kind.into(), tx: n.tile.x, tz: n.tile.y, up: n.up }).collect();
-                let npcs = self.npcs.iter().map(|m| NpcInfo { id: m.id, kind: m.def.kind.into(), tx: m.tile.x, tz: m.tile.y, hp: m.hp, max: m.def.hp }).collect();
-                self.out.push(S2C::Welcome {
-                    id: ME,
-                    token: "offline".into(),
-                    tick_ms: self.tick_ms,
-                    you: You { name: Some(name.clone()), tx: tile.x, tz: tile.y, skills, inv, weapon: None, hp, max_hp: hp },
-                    players,
-                    nodes,
-                    npcs,
-                });
+                self.players.insert(0, P { id: ME, name: name.clone(), tile, path: VecDeque::new(), run: false, task: Task::None, timer: 0, skills, inv, weapon: None, hp, cd: 0, anim: anim::IDLE, sent: None, bot: None, gear: Gear::default() });
+                let w = self.welcome();
+                self.out.push(w);
                 self.out.push(S2C::Msg { text: format!("Welcome to MarsScape, {name}. You're offline: this world runs on your machine.") });
+                if self.surge.next == 0 {
+                    // the first Rift Surge comes sooner offline
+                    self.surge.next = self.n + 1200 + self.rand_i(0, 600) as u64;
+                }
             }
             C2S::Walk { path, run } => {
                 let Some(p) = self.me() else { return };
@@ -377,7 +454,8 @@ impl Sim {
                 self.colonist_chat(&msg);
             }
             C2S::Equip { slot } => self.equip(ME, slot),
-            C2S::Unequip => {
+            C2S::Unequip { gear: Some(g) } if g != "weapon" => self.take_off(&g),
+            C2S::Unequip { .. } => {
                 let Some(p) = self.me() else { return };
                 let Some(w) = p.weapon.clone() else { return };
                 let Some(free) = p.inv.iter().position(|s| s.is_none()) else {
@@ -389,6 +467,7 @@ impl Sim {
                 let inv = p.inv.clone();
                 self.out.push(S2C::Equip { weapon: None });
                 self.out.push(S2C::Inv { inv });
+                self.send_gear();
             }
             C2S::Attack { npc } => {
                 if self.npcs.iter().any(|m| m.id == npc && m.dead_until.is_none()) {
@@ -411,6 +490,22 @@ impl Sim {
                 }
             }
             C2S::Ping => {}
+            C2S::BankDeposit { slot, qty } => self.bank_deposit(slot, qty),
+            C2S::BankWithdraw { idx, qty } => self.bank_withdraw(idx, qty),
+            C2S::TradeRequest { .. } | C2S::TradeOffer { .. } | C2S::TradeRemove { .. } | C2S::TradeAccept | C2S::TradeDecline => {
+                self.msg(ME, "Trading needs another player: it works on the online server.");
+            }
+            C2S::Talk { id } => {
+                if self.players.iter().any(|p| p.id == id && p.bot.is_some()) {
+                    if let Some(p) = self.me() {
+                        p.task = Task::Talk(id);
+                        p.path.clear();
+                    }
+                    self.dialog = None;
+                }
+            }
+            C2S::DialogChoose { option } => self.choose(&option),
+            C2S::Rub { slot, skill } => self.rub(slot, &skill),
         }
     }
 
@@ -421,6 +516,7 @@ impl Sim {
         match kind {
             "fabricator" => {}
             "rift" => self.msg(pid, "A tear into the void. Stars where the ground should be, and things crawling out."),
+            k if usable_node(k) => p.task = Task::Use(node),
             _ => {
                 p.task = Task::Gather(node);
                 p.timer = 0;
@@ -435,6 +531,11 @@ impl Sim {
             self.msg(pid, "You need to be next to a fabricator.");
             return;
         }
+        if r.quest.is_some_and(|q| self.quests.get(q).is_none_or(|s| s.s != "done")) {
+            self.msg(pid, "You don't know how to make that yet. Maybe a colonist can teach you.");
+            return;
+        }
+        let Some(p) = self.players.iter_mut().find(|p| p.id == pid) else { return };
         if p.skills.level(Skill::Fabrication) < r.level {
             self.msg(pid, format!("You need a Fabrication level of {} to make that.", r.level));
             return;
@@ -450,6 +551,20 @@ impl Sim {
     fn equip(&mut self, pid: u32, slot: usize) {
         let Some(p) = self.players.iter_mut().find(|p| p.id == pid) else { return };
         let Some(item) = p.inv.get(slot).and_then(|s| s.as_ref()).map(|s| s.item.clone()) else { return };
+        if let Some(a) = armour(&item) {
+            if p.skills.level(Skill::Defence) < a.level {
+                self.msg(pid, format!("You need a Defence level of {} to wear that.", a.level));
+                return;
+            }
+            let old = p.gear.slot_mut(a.slot).and_then(|g| g.replace(item.clone()));
+            p.inv[slot] = old.map(|o| Slot { item: o, qty: 1 });
+            if pid == ME {
+                let inv = p.inv.clone();
+                self.out.push(S2C::Inv { inv });
+                self.send_gear();
+            }
+            return;
+        }
         let w = weapon(Some(&item));
         if w.item.is_empty() {
             self.msg(pid, "You can't equip that.");
@@ -465,6 +580,7 @@ impl Sim {
             let inv = p.inv.clone();
             self.out.push(S2C::Equip { weapon: Some(item) });
             self.out.push(S2C::Inv { inv });
+            self.send_gear();
         }
     }
 
@@ -494,6 +610,9 @@ impl Sim {
 
     /// Advance the world by `dt` seconds; returns everything the local client should receive.
     pub fn update(&mut self, dt: f32, grid: &mut WalkGrid) -> Vec<S2C> {
+        if std::mem::take(&mut self.hold) {
+            return std::mem::take(&mut self.out);
+        }
         if self.joined {
             self.acc += dt;
             let tick = self.tick_ms as f32 / 1000.0;
@@ -563,6 +682,9 @@ impl Sim {
         }
         self.colonists_help();
         self.npc_tick(grid);
+        if !self.in_cave {
+            self.surge_tick(grid);
+        }
         if n % HP_REGEN_TICKS == 0 {
             for p in self.players.iter_mut() {
                 let max = p.skills.level(Skill::Hitpoints) as i32;
@@ -649,6 +771,58 @@ impl Sim {
         let pid = p.id;
         match p.task {
             Task::None => {}
+            Task::Use(nid) => {
+                if !p.path.is_empty() {
+                    return;
+                }
+                p.task = Task::None;
+                let Some(n) = self.nodes.iter().find(|n| n.id == nid) else { return };
+                let (nt, kind) = (n.tile, n.kind);
+                let p = &self.players[pi];
+                if chebyshev((p.tile.x, p.tile.y), (nt.x, nt.y)) > 1 {
+                    self.msg(pid, "You need to stand next to that.");
+                    return;
+                }
+                if pid != ME {
+                    return;
+                }
+                match kind {
+                    "locker" => {
+                        let items = self.bank.clone();
+                        self.out.push(S2C::Bank { items, slots: 100 });
+                    }
+                    "pit" => {
+                        let room = format!("{}~cave", self.site);
+                        self.out.push(S2C::Travel { room });
+                    }
+                    "ladder" => {
+                        let room = self.site.clone();
+                        self.out.push(S2C::Travel { room });
+                    }
+                    _ => {}
+                }
+            }
+            Task::Talk(cid) => {
+                let Some(ci) = self.players.iter().position(|q| q.id == cid) else {
+                    self.players[pi].task = Task::None;
+                    return;
+                };
+                let (ct, mt) = (self.players[ci].tile, self.players[pi].tile);
+                if chebyshev((ct.x, ct.y), (mt.x, mt.y)) > 2 {
+                    if self.players[pi].path.is_empty() {
+                        let path = grid.find_path(mt, ct, |t| chebyshev((t.x, t.y), (ct.x, ct.y)) <= 2);
+                        if path.is_empty() {
+                            self.players[pi].task = Task::None;
+                            return;
+                        }
+                        self.players[pi].path = path.into_iter().collect();
+                    }
+                    return;
+                }
+                self.players[pi].task = Task::None;
+                self.players[pi].path.clear();
+                self.talk(ci);
+            }
             Task::Gather(nid) => {
                 if !p.path.is_empty() {
                     return;
@@ -690,6 +864,7 @@ impl Sim {
                         let inv = self.players[pi].inv.clone();
                         self.out.push(S2C::Inv { inv });
                         self.msg(pid, format!("You get some {}.", item_name(def.item).to_lowercase()));
+                        self.quest_event("gather", def.item);
                     }
                     self.add_xp(pi, def.skill, def.xp);
                     if self.rand() < def.deplete {
@@ -732,6 +907,7 @@ impl Sim {
                     let inv = self.players[pi].inv.clone();
                     self.out.push(S2C::Inv { inv });
                     self.msg(pid, format!("You make: {}.", item_name(r.id)));
+                    self.quest_event("craft", r.id);
                 }
                 self.add_xp(pi, Skill::Fabrication, r.xp);
                 let p = &mut self.players[pi];
@@ -756,6 +932,9 @@ impl Sim {
                 let dmg = dmg.min(self.npcs[mi].hp);
                 self.out.push(S2C::Hit { src: Who::P(pid).fmt(), dst: Who::N(mid).fmt(), dmg });
                 self.npcs[mi].hp -= dmg;
+                if pid == ME && self.surge.boss == Some(mid) {
+                    self.surge.dmg += dmg;
+                }
                 if self.npcs[mi].target.is_none() {
                     self.npcs[mi].target = Some(pid);
                 }
@@ -776,11 +955,19 @@ impl Sim {
         m.hp = 0;
         m.anim = anim::DEAD;
         m.target = None;
-        m.dead_until = Some(self.n + NPC_RESPAWN_TICKS);
+        // surge creatures are removed a few ticks after they fall
+        m.dead_until = Some(self.n + if m.temp { 4 } else { NPC_RESPAWN_TICKS });
         let (id, def) = (m.id, m.def);
         self.out.push(S2C::Death { who: Who::N(id).fmt() });
         self.players[killer].task = Task::None;
         let pid = self.players[killer].id;
+        if pid == ME {
+            self.quest_event("kill", def.kind);
+        }
+        if self.surge.boss == Some(id) {
+            self.surge_finish(true);
+            return;
+        }
         let mut got = Vec::new();
         for (item, chance) in creature_drops(def.kind) {
             if self.rand() < *chance {
@@ -801,8 +988,13 @@ impl Sim {
     }
 
     fn npc_tick(&mut self, grid: &mut WalkGrid) {
+        let mut gone = Vec::new();
         for mi in 0..self.npcs.len() {
             if let Some(t) = self.npcs[mi].dead_until {
+                if self.n >= t && self.npcs[mi].temp {
+                    gone.push(self.npcs[mi].id);
+                    continue;
+                }
                 if self.n >= t {
                     let m = &mut self.npcs[mi];
                     m.dead_until = None;
@@ -822,10 +1014,12 @@ impl Sim {
             // and nobody else is already fighting (single-way combat)
             if self.npcs[mi].target.is_none() && chebyshev((tile.x, tile.y), (home.x, home.y)) <= LEASH_TILES / 2 {
                 let busy: Vec<u32> = self.npcs.iter().filter(|m| m.dead_until.is_none()).filter_map(|m| m.target).collect();
+                // surge creatures go for anyone nearby
+                let temp = self.npcs[mi].temp;
                 let near = self
                     .players
                     .iter()
-                    .filter(|p| p.skills.combat_level() < 2 * def.level && !busy.contains(&p.id))
+                    .filter(|p| temp || (p.skills.combat_level() < 2 * def.level && !busy.contains(&p.id)))
                     .map(|p| (chebyshev((p.tile.x, p.tile.y), (tile.x, tile.y)), p.id))
                     .filter(|(d, _)| *d <= AGGRO_TILES)
                     .min();
@@ -846,7 +1040,8 @@ impl Sim {
                         if self.npcs[mi].cd == 0 {
                             self.npcs[mi].cd = def.speed;
                             let pdef = self.players[pi].skills.level(Skill::Defence);
-                            let dmg = if self.rand() < hit_chance(creature_att_roll(def), def_roll(pdef)) { (self.rand() * (def.max_hit + 1) as f64) as i32 } else { 0 };
+                            let bonus = self.players[pi].gear.bonus();
+                            let dmg = if self.rand() < hit_chance(creature_att_roll(def), player_def_roll(pdef, bonus)) { (self.rand() * (def.max_hit + 1) as f64) as i32 } else { 0 };
                             let p = &mut self.players[pi];
                             let dmg = dmg.min(p.hp);
                             p.hp -= dmg;
@@ -886,6 +1081,10 @@ impl Sim {
                 }
             }
         }
+        for id in gone {
+            self.npcs.retain(|m| m.id != id);
+            self.out.push(S2C::NpcDespawn { id });
+        }
     }
 
     fn player_dies(&mut self, pi: usize, grid: &mut WalkGrid) {
@@ -911,6 +1110,13 @@ impl Sim {
                 None => "Oh dear, you are dead!".into(),
             };
             self.msg(pid, text);
+            self.send_gear();
+            if self.in_cave {
+                // carried back up to the landing site
+                self.up_at_spawn = true;
+                let room = self.site.clone();
+                self.out.push(S2C::Travel { room });
+            }
         }
     }
 
@@ -1045,9 +1251,561 @@ impl Sim {
 fn step_toward(grid: &mut WalkGrid, a: IVec2, b: IVec2) -> IVec2 {
     let d = (b - a).signum();
     for c in [d, IVec2::new(d.x, 0), IVec2::new(0, d.y)] {
-        if c != IVec2::ZERO && a + c != b && grid.walkable(a + c) {
+        let corner_ok = c.x == 0 || c.y == 0 || (grid.walkable(a + IVec2::new(c.x, 0)) && grid.walkable(a + IVec2::new(0, c.y)));
+        if c != IVec2::ZERO && a + c != b && grid.walkable(a + c) && corner_ok {
             return a + c;
         }
     }
     a
+}
+
+// ------------------------------------------------------------------------------------ new features
+
+impl Sim {
+    /// Everything the client gets queued since the last update (travel applies it at once).
+    pub fn take_out(&mut self) -> Vec<S2C> {
+        std::mem::take(&mut self.out)
+    }
+
+    fn welcome(&self) -> S2C {
+        let me = self.players.iter().find(|p| p.id == ME);
+        let players = self
+            .players
+            .iter()
+            .filter(|p| p.id != ME)
+            .map(|p| PlayerInfo { id: p.id, name: p.name.clone(), tx: p.tile.x, tz: p.tile.y, bot: p.bot.is_some(), role: p.bot.as_ref().map(|b| b.role.to_string()) })
+            .collect();
+        let nodes = self.nodes.iter().map(|n| NodeInfo { id: n.id, kind: n.kind.into(), tx: n.tile.x, tz: n.tile.y, up: n.up }).collect();
+        let npcs = self.npcs.iter().map(|m| NpcInfo { id: m.id, kind: m.def.kind.into(), tx: m.tile.x, tz: m.tile.y, hp: m.hp, max: m.def.hp, dead: m.dead_until.is_some() }).collect();
+        let you = match me {
+            Some(p) => You {
+                name: Some(p.name.clone()),
+                tx: p.tile.x,
+                tz: p.tile.y,
+                skills: p.skills.clone(),
+                inv: p.inv.clone(),
+                weapon: p.weapon.clone(),
+                hp: p.hp,
+                max_hp: p.skills.level(Skill::Hitpoints) as i32,
+                gear: p.gear.clone(),
+                quests: self.quests.clone(),
+                quest_points: quest_points(&self.quests),
+            },
+            None => You { name: None, tx: self.spawn.x, tz: self.spawn.y, skills: Skills::fresh(), inv: new_inv(), weapon: None, hp: 10, max_hp: 10, gear: Gear::default(), quests: HashMap::new(), quest_points: 0 },
+        };
+        let cave = if self.in_cave {
+            let g = cave::generate(&self.site);
+            Some(CaveInfo { w: g.w as u32, h: g.h as u32, rle: g.rle() })
+        } else {
+            None
+        };
+        S2C::Welcome {
+            id: ME,
+            token: "offline".into(),
+            tick_ms: self.tick_ms,
+            you,
+            players,
+            nodes,
+            npcs,
+            room: Some(if self.in_cave { "cave" } else { "surface" }.into()),
+            event: self.surge_info(),
+            cave,
+            exit: None,
+            tick: self.n,
+        }
+    }
+
+    /// Down the pit / up the ladder (the client calls this on our `travel`).
+    pub fn travel(&mut self, room: &str) {
+        let down = room.ends_with("~cave");
+        let Some(mi) = self.players.iter().position(|p| p.id == ME) else { return };
+        if down && !self.in_cave {
+            let mut me = self.players.remove(mi);
+            let g = cave::generate(&self.site);
+            self.stash = Some(Stash { players: std::mem::take(&mut self.players), nodes: std::mem::take(&mut self.nodes), npcs: std::mem::take(&mut self.npcs), spawn: self.spawn });
+            self.nodes = g.nodes.iter().enumerate().map(|(i, (k, t))| N { id: i as u32, kind: k, tile: *t, up: true, respawn_at: 0 }).collect();
+            self.npcs = g
+                .npcs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (k, t))| creature_def(k).map(|def| M { id: i as u32 + 1, def, home: *t, tile: *t, hp: def.hp, target: None, cd: 0, dead_until: None, anim: anim::IDLE, sent: None, temp: false }))
+                .collect();
+            me.tile = g.spawn;
+            me.path.clear();
+            me.task = Task::None;
+            me.sent = None;
+            self.spawn = g.spawn;
+            self.players = vec![me];
+            self.in_cave = true;
+            self.dialog = None;
+            let w = self.welcome();
+            self.out.push(w);
+            self.out.push(S2C::Msg { text: "You climb down into the lava tube. The walls glow faintly, and something skitters in the dark.".into() });
+            self.quest_event("enter", "cave");
+            self.hold = true;
+        } else if !down && self.in_cave {
+            let mut me = self.players.remove(mi);
+            let Some(st) = self.stash.take() else { return };
+            self.players = st.players;
+            self.nodes = st.nodes;
+            self.npcs = st.npcs;
+            self.spawn = st.spawn;
+            let pit = self.nodes.iter().find(|n| n.kind == "pit").map(|n| n.tile);
+            me.tile = match (std::mem::take(&mut self.up_at_spawn), pit) {
+                (false, Some(t)) => t + IVec2::new(1, 0),
+                _ => self.spawn,
+            };
+            me.path.clear();
+            me.task = Task::None;
+            me.sent = None;
+            self.players.insert(0, me);
+            self.in_cave = false;
+            let w = self.welcome();
+            self.out.push(w);
+            self.hold = true;
+        }
+    }
+
+    fn send_gear(&mut self) {
+        let Some(p) = self.players.iter().find(|p| p.id == ME) else { return };
+        let g = p.gear.clone();
+        let bonus = g.bonus();
+        self.out.push(S2C::Gear { weapon: p.weapon.clone(), helmet: g.helmet, suit: g.suit, shield: g.shield, cape: g.cape, bonus });
+    }
+
+    fn take_off(&mut self, slot: &str) {
+        let Some(pi) = self.me_index() else { return };
+        let p = &mut self.players[pi];
+        let Some(free) = p.inv.iter().position(|s| s.is_none()) else {
+            self.msg(ME, "You don't have enough inventory space.");
+            return;
+        };
+        let Some(item) = p.gear.slot_mut(slot).and_then(|g| g.take()) else { return };
+        p.inv[free] = Some(Slot { item, qty: 1 });
+        let inv = p.inv.clone();
+        self.out.push(S2C::Inv { inv });
+        self.send_gear();
+    }
+
+    fn near_locker(&self) -> bool {
+        let Some(me) = self.players.iter().find(|p| p.id == ME) else { return false };
+        self.nodes.iter().any(|n| n.kind == "locker" && chebyshev((n.tile.x, n.tile.y), (me.tile.x, me.tile.y)) <= 1)
+    }
+
+    fn bank_deposit(&mut self, slot: usize, qty: Qty) {
+        if !self.near_locker() {
+            return self.msg(ME, "You need to stand next to the colony locker.");
+        }
+        let Some(pi) = self.me_index() else { return };
+        let Some(item) = self.players[pi].inv.get(slot).cloned().flatten().map(|s| s.item) else { return };
+        let have = count(&self.players[pi].inv, &item);
+        let n = match qty {
+            Qty::All => have,
+            Qty::N(k) => k.min(have),
+        };
+        if n == 0 {
+            return;
+        }
+        if !self.bank.iter().any(|s| s.item == item) && self.bank.len() >= 100 {
+            return self.msg(ME, "Your locker is full.");
+        }
+        let mut left = n;
+        for s in self.players[pi].inv.iter_mut() {
+            if left == 0 {
+                break;
+            }
+            if let Some(x) = s.as_mut().filter(|x| x.item == item) {
+                let take = x.qty.min(left);
+                x.qty -= take;
+                left -= take;
+                if x.qty == 0 {
+                    *s = None;
+                }
+            }
+        }
+        match self.bank.iter_mut().find(|s| s.item == item) {
+            Some(b) => b.qty += n,
+            None => self.bank.push(Slot { item, qty: n }),
+        }
+        let (inv, items) = (self.players[pi].inv.clone(), self.bank.clone());
+        self.out.push(S2C::Inv { inv });
+        self.out.push(S2C::Bank { items, slots: 100 });
+    }
+
+    fn bank_withdraw(&mut self, idx: usize, qty: Qty) {
+        if !self.near_locker() {
+            return self.msg(ME, "You need to stand next to the colony locker.");
+        }
+        let Some(pi) = self.me_index() else { return };
+        let Some(e) = self.bank.get(idx).cloned() else { return };
+        let want = match qty {
+            Qty::All => e.qty,
+            Qty::N(k) => k.min(e.qty),
+        };
+        let mut got = 0;
+        for _ in 0..want {
+            if !self.give(pi, &e.item) {
+                break;
+            }
+            got += 1;
+        }
+        if got == 0 {
+            return self.msg(ME, "You don't have enough inventory space.");
+        }
+        self.bank[idx].qty -= got;
+        if self.bank[idx].qty == 0 {
+            self.bank.remove(idx);
+        }
+        let (inv, items) = (self.players[pi].inv.clone(), self.bank.clone());
+        self.out.push(S2C::Inv { inv });
+        self.out.push(S2C::Bank { items, slots: 100 });
+    }
+
+    fn rub(&mut self, slot: usize, skill: &str) {
+        let Some(pi) = self.me_index() else { return };
+        if self.players[pi].inv.get(slot).cloned().flatten().is_none_or(|s| s.item != "xp_lamp") {
+            return self.out.push(S2C::Err { text: "That isn't a lamp.".into() });
+        }
+        let Some(k) = Skill::parse(skill) else { return };
+        let xp = lamp_xp(self.players[pi].skills.level(k));
+        self.players[pi].inv[slot] = None;
+        let inv = self.players[pi].inv.clone();
+        self.out.push(S2C::Inv { inv });
+        self.msg(ME, format!("The lamp flares and memories that aren't yours flood in. (+{xp} {skill} xp)"));
+        self.add_xp(pi, k, xp);
+    }
+
+    // ---- quests
+
+    fn send_quest(&mut self, q: &'static QuestDef) {
+        let Some(st) = self.quests.get(q.id).cloned() else { return };
+        let step = &q.steps[(st.step as usize).min(q.steps.len() - 1)];
+        let qp = quest_points(&self.quests);
+        self.out.push(S2C::Quest { id: q.id.into(), state: st.s, step: st.step, progress: st.p.min(step.n), goal: step.n, qp });
+    }
+
+    /// Something happened that quests may count (kill / gather / craft / enter).
+    fn quest_event(&mut self, kind: &str, target: &str) {
+        for q in QUESTS {
+            let Some(st) = self.quests.get_mut(q.id) else { continue };
+            if st.s != "active" {
+                continue;
+            }
+            let step = &q.steps[st.step as usize];
+            if step.kind != kind || step.target != target || st.p >= step.n {
+                continue;
+            }
+            st.p += 1;
+            if st.p >= step.n && (st.step as usize) < q.steps.len() - 1 {
+                st.step += 1;
+                st.p = 0;
+                let next = q.steps[st.step as usize].text;
+                self.out.push(S2C::Msg { text: format!("Quest updated: {}. {next}.", q.name) });
+            } else if st.p >= step.n {
+                self.out.push(S2C::Msg { text: format!("{}: done! Go back and tell them.", q.name) });
+            }
+            self.send_quest(q);
+        }
+    }
+
+    fn quest_ready(&self, q: &QuestDef) -> bool {
+        let Some(st) = self.quests.get(q.id) else { return false };
+        if st.s != "active" || st.step as usize != q.steps.len() - 1 {
+            return false;
+        }
+        let step = &q.steps[st.step as usize];
+        let inv = self.players.iter().find(|p| p.id == ME).map(|p| p.inv.as_slice()).unwrap_or(&[]);
+        if step.kind == "deliver" { count(inv, step.target) >= step.n } else { st.p >= step.n }
+    }
+
+    fn quest_lock(&self, q: &QuestDef) -> Option<String> {
+        let me = self.players.iter().find(|p| p.id == ME)?;
+        q.req.iter().find(|(k, l)| me.skills.level(*k) < *l).map(|(k, l)| format!("{} {l}", k.key()))
+    }
+
+    fn dialog(&mut self, ci: usize, text: String, quest: Option<&'static str>, options: Vec<(String, String)>) {
+        let c = &self.players[ci];
+        let role = c.bot.as_ref().map(|b| b.role.to_string());
+        self.dialog = Some((c.id, quest, options.iter().map(|o| o.0.clone()).collect()));
+        let options = options.into_iter().map(|(id, text)| DialogOpt { id, text }).collect();
+        self.out.push(S2C::Dialog { npc: c.id, name: c.name.clone(), role, text, quest: quest.map(Into::into), options });
+    }
+
+    fn talk(&mut self, ci: usize) {
+        let Some(role) = self.players[ci].bot.as_ref().map(|b| b.role) else { return };
+        let roles: Vec<&str> = self.players.iter().filter_map(|p| p.bot.as_ref().map(|b| b.role)).collect();
+        let mine: Vec<&'static QuestDef> = QUESTS.iter().filter(|q| (if roles.contains(&q.giver) { q.giver } else { "quartermaster" }) == role).collect();
+        if let Some(q) = mine.iter().find(|q| self.quest_ready(q)) {
+            return self.dialog(ci, format!("Is that it? {}, all done?", q.name), Some(q.id), vec![("turn_in".into(), "Here you go.".into()), ("bye".into(), "Not yet.".into())]);
+        }
+        if let Some(q) = mine.iter().find(|q| self.quests.get(q.id).is_some_and(|s| s.s == "active")) {
+            let st = &self.quests[q.id];
+            let step = &q.steps[st.step as usize];
+            let inv = self.players.iter().find(|p| p.id == ME).map(|p| p.inv.clone()).unwrap_or_default();
+            let prog = if step.kind == "deliver" { count(&inv, step.target) } else { st.p };
+            return self.dialog(ci, format!("{}: {} ({}/{}). I'm counting on you.", q.name, step.text, prog.min(step.n), step.n), Some(q.id), vec![("bye".into(), "On it.".into())]);
+        }
+        let open: Vec<&'static QuestDef> = mine.iter().copied().filter(|q| !self.quests.contains_key(q.id) && self.quest_lock(q).is_none()).collect();
+        if open.len() == 1 {
+            return self.offer(ci, open[0]);
+        }
+        if open.len() > 1 {
+            let mut opts: Vec<(String, String)> = open.iter().map(|q| (format!("offer:{}", q.id), q.name.to_string())).collect();
+            opts.push(("bye".into(), "Not now.".into()));
+            return self.dialog(ci, "I've got work, if you want it.".into(), None, opts);
+        }
+        if let Some(q) = mine.iter().find(|q| !self.quests.contains_key(q.id)) {
+            let lock = self.quest_lock(q).unwrap_or_default();
+            return self.dialog(ci, format!("I might have work for you once you've got {lock}."), Some(q.id), vec![("bye".into(), "Okay.".into())]);
+        }
+        let name = self.players.iter().find(|p| p.id == ME).map_or(String::new(), |p| p.name.clone());
+        self.dialog(ci, format!("Nothing for you right now, {name}. Stay clear of the rifts."), None, vec![("bye".into(), "Bye.".into())]);
+    }
+
+    fn offer(&mut self, ci: usize, q: &'static QuestDef) {
+        self.dialog(ci, format!("{} (Reward: {}.)", q.offer, q.reward), Some(q.id), vec![("accept".into(), "I'll do it.".into()), ("decline".into(), "Not now.".into())]);
+    }
+
+    fn choose(&mut self, option: &str) {
+        let Some((npc, quest, opts)) = self.dialog.take() else {
+            return self.out.push(S2C::Err { text: "That option isn't open.".into() });
+        };
+        if !opts.iter().any(|o| o == option) {
+            return self.out.push(S2C::Err { text: "That option isn't open.".into() });
+        }
+        if let Some(id) = option.strip_prefix("offer:") {
+            if let (Some(ci), Some(q)) = (self.players.iter().position(|p| p.id == npc), quest_def(id)) {
+                return self.offer(ci, q);
+            }
+            return self.out.push(S2C::DialogEnd);
+        }
+        self.out.push(S2C::DialogEnd);
+        let Some(q) = quest.and_then(quest_def) else { return };
+        match option {
+            "accept" => {
+                if self.quests.contains_key(q.id) || self.quest_lock(q).is_some() {
+                    return;
+                }
+                self.quests.insert(q.id.into(), QuestSt { s: "active".into(), step: 0, p: 0 });
+                self.out.push(S2C::Msg { text: format!("Quest started: {}. {}.", q.name, q.steps[0].text) });
+                self.send_quest(q);
+                // already down the tube / already holding the thing
+                if q.steps[0].kind == "enter" && self.in_cave {
+                    self.quest_event("enter", "cave");
+                }
+            }
+            "turn_in" => {
+                if !self.quest_ready(q) {
+                    return self.out.push(S2C::Msg { text: "You don't have everything yet.".into() });
+                }
+                let Some(pi) = self.me_index() else { return };
+                let mut items: Vec<&str> = Vec::new();
+                for (it, n) in q.items {
+                    for _ in 0..*n {
+                        items.push(it);
+                    }
+                }
+                for _ in 0..q.lamps {
+                    items.push("xp_lamp");
+                }
+                let step = &q.steps[q.steps.len() - 1];
+                let freed = if step.kind == "deliver" && !stacks(step.target) { step.n as usize } else { 0 };
+                let need = items.iter().filter(|i| !stacks(i)).count() + usize::from(items.iter().any(|i| stacks(i)));
+                if self.players[pi].inv.iter().filter(|s| s.is_none()).count() + freed < need {
+                    return self.out.push(S2C::Msg { text: "Make some room in your pack first.".into() });
+                }
+                if step.kind == "deliver" {
+                    let mut left = step.n;
+                    for s in self.players[pi].inv.iter_mut() {
+                        if left == 0 {
+                            break;
+                        }
+                        if let Some(x) = s.as_mut().filter(|x| x.item == step.target) {
+                            let take = x.qty.min(left);
+                            x.qty -= take;
+                            left -= take;
+                            if x.qty == 0 {
+                                *s = None;
+                            }
+                        }
+                    }
+                }
+                for it in items {
+                    self.give(pi, it);
+                }
+                self.quests.insert(q.id.into(), QuestSt { s: "done".into(), step: q.steps.len() as u32 - 1, p: step.n });
+                let inv = self.players[pi].inv.clone();
+                self.out.push(S2C::Inv { inv });
+                self.say_as_id(npc, q.thanks);
+                self.out.push(S2C::Msg { text: format!("Quest complete: {}! You get {}. (+{} quest point{})", q.name, q.reward, q.qp, if q.qp > 1 { "s" } else { "" }) });
+                if q.id == "echoes" {
+                    self.out.push(S2C::Msg { text: "New fabricator recipes unlocked.".into() });
+                }
+                self.send_quest(q);
+            }
+            _ => {}
+        }
+    }
+
+    fn say_as_id(&mut self, id: u32, msg: &str) {
+        if let Some(i) = self.players.iter().position(|p| p.id == id) {
+            self.say_as(i, msg);
+        }
+    }
+
+    // ---- Rift Surge
+
+    fn surge_info(&self) -> Option<EventInfo> {
+        let phase = match self.surge.phase {
+            1 => "warning",
+            2 => "open",
+            3 => "boss",
+            _ => return None,
+        };
+        Some(EventInfo { kind: "surge".into(), phase: phase.into(), tx: self.surge.spot.x, tz: self.surge.spot.y, ends_in: self.surge.until.saturating_sub(self.n) })
+    }
+
+    fn surge_announce(&mut self, text: &str) {
+        let e = self.surge_info().unwrap_or(EventInfo { kind: "surge".into(), phase: "ended".into(), tx: self.surge.spot.x, tz: self.surge.spot.y, ends_in: 0 });
+        self.out.push(S2C::Event(e));
+        self.out.push(S2C::Msg { text: text.into() });
+    }
+
+    /// Test hook (`--mmo-script surge:now` / `surge:boss`).
+    pub fn cheat_surge(&mut self, how: &str) {
+        if self.in_cave {
+            return;
+        }
+        self.surge_clear();
+        if how == "boss" {
+            let me = self.players.iter().find(|p| p.id == ME).map_or(self.spawn, |p| p.tile);
+            self.surge.spot = me + IVec2::new(4, 0);
+            self.surge.count += 1;
+            self.surge.phase = 2;
+            self.surge.until = self.n; // straight to the boss on the next tick
+        } else {
+            self.surge.next = self.n + 1;
+        }
+    }
+
+    fn surge_clear(&mut self) {
+        let temp: Vec<u32> = self.npcs.iter().filter(|m| m.temp).map(|m| m.id).collect();
+        for id in temp {
+            self.npcs.retain(|m| m.id != id);
+            self.out.push(S2C::NpcDespawn { id });
+        }
+        self.surge.phase = 0;
+        self.surge.boss = None;
+        self.surge.dmg = 0;
+    }
+
+    fn spawn_temp(&mut self, grid: &mut WalkGrid, kind: &str, at: IVec2) -> Option<u32> {
+        let def = creature_def(kind)?;
+        let home = grid.nearest_walkable(at, 6).unwrap_or(at);
+        self.next_temp += 1;
+        let id = self.next_temp;
+        self.npcs.push(M { id, def, home, tile: home, hp: def.hp, target: None, cd: 0, dead_until: None, anim: anim::IDLE, sent: None, temp: true });
+        self.out.push(S2C::NpcSpawn { npc: NpcInfo { id, kind: kind.into(), tx: home.x, tz: home.y, hp: def.hp, max: def.hp, dead: false } });
+        Some(id)
+    }
+
+    fn surge_tick(&mut self, grid: &mut WalkGrid) {
+        let n = self.n;
+        match self.surge.phase {
+            0 => {
+                if self.surge.next != 0 && n >= self.surge.next {
+                    let a = self.rand() * std::f64::consts::TAU;
+                    let d = 15.0 + self.rand() * 20.0;
+                    let t = self.spawn + IVec2::new((a.cos() * d).round() as i32, (a.sin() * d).round() as i32);
+                    self.surge.spot = grid.nearest_walkable(t, 6).unwrap_or(t);
+                    self.surge.count += 1;
+                    self.surge.phase = 1;
+                    self.surge.until = n + if self.surge.count == 1 && self.surge.next <= n + 1 { SURGE_WARN } else { SURGE_WARN };
+                    self.surge_announce("The ground hums. A Rift Surge is building near the landing site!");
+                }
+            }
+            1 => {
+                if n >= self.surge.until {
+                    self.surge.phase = 2;
+                    self.surge.wave = 0;
+                    self.surge.until = n + SURGE_WAVE_GAP * SURGE_WAVES.len() as u64;
+                    self.surge_announce("A Rift Surge tears open! Creatures are pouring out.");
+                    self.surge_wave(grid);
+                }
+            }
+            2 => {
+                if n >= self.surge.until {
+                    self.surge.phase = 3;
+                    self.surge.until = n + SURGE_BOSS;
+                    self.surge.dmg = 0;
+                    let spot = self.surge.spot;
+                    self.surge.boss = self.spawn_temp(grid, "leviathan", spot);
+                    self.surge_announce("The rift screams. A Void Leviathan forces its way through!");
+                } else if (self.surge.until - n) % SURGE_WAVE_GAP == 0 {
+                    self.surge_wave(grid);
+                }
+            }
+            _ => {
+                let alive = self.surge.boss.is_some_and(|b| self.npcs.iter().any(|m| m.id == b && m.dead_until.is_none()));
+                if !alive || n >= self.surge.until {
+                    self.surge_finish(false);
+                }
+            }
+        }
+    }
+
+    fn surge_wave(&mut self, grid: &mut WalkGrid) {
+        let Some(w) = SURGE_WAVES.get(self.surge.wave) else { return };
+        self.surge.wave += 1;
+        for (kind, k) in w.iter() {
+            for _ in 0..*k {
+                let at = self.surge.spot + IVec2::new(self.rand_i(-3, 3), self.rand_i(-3, 3));
+                self.spawn_temp(grid, kind, at);
+            }
+        }
+    }
+
+    fn surge_finish(&mut self, killed: bool) {
+        self.surge.phase = 0;
+        let boss = self.surge.boss.take();
+        if killed && self.surge.dmg * 20 >= 250 {
+            let mut drops = Vec::new();
+            for _ in 0..self.rand_i(3, 8) {
+                drops.push("void_crystal");
+            }
+            if self.rand() < 1.0 / 8.0 {
+                drops.push("rift_blade");
+            }
+            if self.rand() < 1.0 / 5.0 {
+                drops.push("void_cape");
+            }
+            if let Some(pi) = self.me_index() {
+                let got: Vec<&str> = drops.into_iter().filter(|it| self.give(pi, it)).collect();
+                let inv = self.players[pi].inv.clone();
+                self.out.push(S2C::Inv { inv });
+                let share = (100 * self.surge.dmg / 250).min(100);
+                let mut counts: Vec<(&str, u32)> = Vec::new();
+                for it in got {
+                    match counts.iter_mut().find(|c| c.0 == it) {
+                        Some(c) => c.1 += 1,
+                        None => counts.push((it, 1)),
+                    }
+                }
+                let list: Vec<String> = counts.iter().map(|(i, k)| if *k > 1 { format!("{k} x {}", item_name(i)) } else { item_name(i).to_string() }).collect();
+                self.out.push(S2C::Msg { text: format!("Surge loot ({share}% of the damage): {}.", if list.is_empty() { "nothing (inventory full)".into() } else { list.join(", ") }) });
+            }
+            self.surge_announce("The Void Leviathan falls! The rift seals.");
+        } else if killed {
+            self.surge_announce("The Void Leviathan falls! The rift seals. (You didn't do enough damage for a share of the loot.)");
+        } else {
+            self.surge_announce("The rift collapses, dragging the creatures back into the void.");
+        }
+        let temp: Vec<u32> = self.npcs.iter().filter(|m| m.temp && (Some(m.id) != boss || !killed)).map(|m| m.id).collect();
+        for id in temp {
+            self.npcs.retain(|m| m.id != id);
+            self.out.push(S2C::NpcDespawn { id });
+        }
+        self.surge.dmg = 0;
+        self.surge.next = self.n + 2000 + self.rand_i(0, 1000) as u64;
+    }
 }

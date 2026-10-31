@@ -183,8 +183,9 @@ impl MaterialExtension for SkyExt {
 
 type SkyMaterial = ExtendedMaterial<StandardMaterial, SkyExt>;
 
+/// The sky (MARSSCAPE hides it in the lava tube).
 #[derive(Component)]
-struct SkyDome;
+pub(crate) struct SkyDome;
 
 fn lin(c: Color) -> Vec3 {
     let l = c.to_linear();

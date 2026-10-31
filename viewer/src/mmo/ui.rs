@@ -1,6 +1,7 @@
-//! MarsScape HUD (bevy_ui): chat box, side panel (inventory / skills / gear tabs), minimap with
-//! compass, hitpoints and run orbs, fabricator panel, right-click menu, name prompt, and the
-//! world-anchored overlays (name tags, health bars, hitsplats) plus XP drops.
+//! MarsScape HUD (bevy_ui): chat box, side panel (inventory / skills / gear / quest tabs), minimap
+//! with compass, hitpoints and run orbs, fabricator / locker / trade / lamp panels, colonist dialog,
+//! the Rift Surge banner, right-click menu, name prompt, and the world-anchored overlays (name tags,
+//! health bars, hitsplats) plus XP drops.
 //! Chunky dark-brown panels with rust borders: old-school in spirit, all original.
 
 use super::proto::*;
@@ -44,7 +45,23 @@ pub enum UiAct {
     CloseFab,
     Run,
     Compass,
-    Unequip,
+    Talk(u32),
+    TradeWith(u32),
+    /// a dialog option id
+    Choose(String),
+    Deposit(usize, Qty),
+    Withdraw(usize, Qty),
+    CloseBank,
+    Offer(usize, Qty),
+    /// take back an offered item (index into your offer)
+    Unoffer(usize),
+    TradeAccept,
+    TradeDecline,
+    /// answer someone's trade request
+    TradeReq(bool),
+    Rub(Skill),
+    CloseLamp,
+    UnequipGear(&'static str),
 }
 
 #[derive(Message, Clone, Debug)]
@@ -138,6 +155,14 @@ pub(super) struct Overlay;
 pub(super) struct Blocker;
 #[derive(Component)]
 pub(super) struct Btn(UiAct);
+#[derive(Component)]
+pub(super) struct DialogRoot;
+#[derive(Component)]
+pub(super) struct SurgeRoot;
+#[derive(Component)]
+pub(super) struct SurgeText;
+#[derive(Component)]
+pub(super) struct SurgeBar;
 
 #[derive(Resource)]
 pub struct UiHandles {
@@ -270,8 +295,8 @@ pub fn spawn(commands: &mut Commands, images: &mut Assets<Image>) {
         .spawn((ScapeUi, Blocker, panel(Node { position_type: PositionType::Absolute, right: Val::Px(8.0), bottom: Val::Px(8.0), width: Val::Px(238.0), flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(6.0)), row_gap: Val::Px(6.0), ..default() }), GlobalZIndex(2)))
         .with_children(|p| {
             p.spawn(Node { column_gap: Val::Px(4.0), ..default() }).with_children(|t| {
-                for (i, l) in ["Pack", "Skills", "Gear"].iter().enumerate() {
-                    let e = label_button(t, l, UiAct::Tab(i as u8), 15.0);
+                for (i, l) in ["Pack", "Skills", "Gear", "Quests"].iter().enumerate() {
+                    let e = label_button(t, l, UiAct::Tab(i as u8), 13.0);
                     t.commands().entity(e).insert(TabBtn(i as u8));
                 }
             });
@@ -310,6 +335,10 @@ pub fn spawn(commands: &mut Commands, images: &mut Assets<Image>) {
     commands.spawn((ScapeUi, Overlay, Node { width: Val::Percent(100.0), height: Val::Percent(100.0), position_type: PositionType::Absolute, ..default() }, Pickable::IGNORE, GlobalZIndex(1)));
     commands.spawn((ScapeUi, FabRoot, Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, Pickable::IGNORE, GlobalZIndex(3)));
     commands.spawn((ScapeUi, CtxRoot, Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, Pickable::IGNORE, GlobalZIndex(4)));
+    // colonist dialog / trade request, above the chat box
+    commands.spawn((ScapeUi, DialogRoot, Node { position_type: PositionType::Absolute, left: Val::Px(8.0), bottom: Val::Px(212.0), width: Val::Px(CHAT_W), max_width: Val::Percent(60.0), ..default() }, Pickable::IGNORE, GlobalZIndex(3)));
+    // Rift Surge banner, top centre
+    commands.spawn((ScapeUi, SurgeRoot, Node { position_type: PositionType::Absolute, top: Val::Px(40.0), width: Val::Percent(100.0), justify_content: JustifyContent::Center, ..default() }, Pickable::IGNORE, GlobalZIndex(2)));
 }
 
 fn short(item: &str) -> &str {
@@ -324,6 +353,17 @@ fn short(item: &str) -> &str {
         "void_crystal" => "Crystal",
         "chitin" => "Chitin",
         "rifle" => "Pulse",
+        "ancient_relic" => "Relic",
+        "xp_lamp" => "Lamp",
+        "chitin_helmet" => "Ch. helm",
+        "chitin_suit" => "Ch. suit",
+        "iron_helmet" => "Ir. helm",
+        "iron_suit" => "Ir. suit",
+        "void_shield" => "Shield",
+        "relic_helmet" => "R. helm",
+        "relic_suit" => "R. suit",
+        "rift_blade" => "Blade",
+        "void_cape" => "Cape",
         other => item_name(other),
     }
 }
@@ -334,6 +374,12 @@ pub fn item_options(slot: usize, item: &str) -> Vec<Opt> {
     if !weapon(Some(item)).item.is_empty() {
         v.push(Opt::new(format!("Equip {name}"), UiAct::Item(slot, "equip")));
     }
+    if armour(item).is_some() {
+        v.push(Opt::new(format!("Wear {name}"), UiAct::Item(slot, "wear")));
+    }
+    if item == "xp_lamp" {
+        v.push(Opt::new(format!("Rub {name}"), UiAct::Item(slot, "rub")));
+    }
     if item == "medkit" {
         v.push(Opt::new(format!("Eat {name}"), UiAct::Item(slot, "eat")));
     }
@@ -341,6 +387,26 @@ pub fn item_options(slot: usize, item: &str) -> Vec<Opt> {
     v.push(Opt::new(format!("Examine {name}"), UiAct::Item(slot, "examine")));
     v.push(Opt::new("Cancel".into(), UiAct::Cancel));
     v
+}
+
+/// With the locker / a trade open: put the item in ("Deposit" / "Offer").
+pub fn move_options(slot: usize, item: &str, verb: &'static str) -> Vec<Opt> {
+    let name = item_name(item);
+    let act = |q: Qty| if verb == "Offer" { UiAct::Offer(slot, q) } else { UiAct::Deposit(slot, q) };
+    let mut v = vec![Opt::new(format!("{verb}-1 {name}"), act(Qty::N(1))), Opt::new(format!("{verb}-5 {name}"), act(Qty::N(5))), Opt::new(format!("{verb}-All {name}"), act(Qty::All))];
+    v.push(Opt::new(format!("Examine {name}"), UiAct::Item(slot, "examine")));
+    v.push(Opt::new("Cancel".into(), UiAct::Cancel));
+    v
+}
+
+pub fn withdraw_options(idx: usize, item: &str) -> Vec<Opt> {
+    let name = item_name(item);
+    vec![
+        Opt::new(format!("Withdraw-1 {name}"), UiAct::Withdraw(idx, Qty::N(1))),
+        Opt::new(format!("Withdraw-5 {name}"), UiAct::Withdraw(idx, Qty::N(5))),
+        Opt::new(format!("Withdraw-All {name}"), UiAct::Withdraw(idx, Qty::All)),
+        Opt::new("Cancel".into(), UiAct::Cancel),
+    ]
 }
 
 fn rgb(c: [f32; 3]) -> Color {
@@ -387,26 +453,39 @@ fn side_skills(p: &mut ChildSpawnerCommands, sc: &Scape) {
     p.spawn(text(format!("Total level {total}    Combat level {}", sc.skills.combat_level()), 13.0, GOLD));
 }
 
+/// One paperdoll slot: what's in it (click = take it off).
+fn gear_slot(p: &mut ChildSpawnerCommands, label: &str, item: Option<&String>, act: UiAct) {
+    let e = button(p, act, Node { width: Val::Px(66.0), height: Val::Px(50.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::Center, row_gap: Val::Px(2.0), ..default() }, INSET);
+    let (sw, l, c) = match item {
+        Some(it) => (Some(rgb(item_color(it))), short(it).to_string(), GOLD),
+        None => (None, label.to_string(), DIM),
+    };
+    p.commands().entity(e).with_children(|b| {
+        if let Some(sw) = sw {
+            b.spawn((Node { width: Val::Px(18.0), height: Val::Px(12.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(sw), BorderColor::all(Color::BLACK), Pickable::IGNORE));
+        }
+        b.spawn(text(l, 11.0, c));
+    });
+}
+
 fn side_gear(p: &mut ChildSpawnerCommands, sc: &Scape) {
     let w = weapon(sc.weapon.as_deref());
     let lvl = sc.skills.level(Skill::Ranged);
-    p.spawn(text("Weapon", 15.0, TEXT));
-    p.spawn((Node { padding: UiRect::all(Val::Px(10.0)), margin: UiRect::vertical(Val::Px(6.0)), column_gap: Val::Px(8.0), align_items: AlignItems::Center, border: UiRect::all(Val::Px(2.0)), ..default() }, BackgroundColor(INSET), BorderColor::all(EDGE_HI))).with_children(|b| {
-        match &sc.weapon {
-            Some(it) => {
-                b.spawn((Node { width: Val::Px(22.0), height: Val::Px(16.0), ..default() }, BackgroundColor(rgb(item_color(it)))));
-                b.spawn(text(item_name(it), 16.0, GOLD));
-            }
-            None => {
-                b.spawn(text("(bare hands)", 15.0, DIM));
-            }
-        }
+    let g = &sc.gear;
+    // paperdoll: helmet on top, cape / suit / weapon across, shield below
+    p.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(4.0), margin: UiRect::vertical(Val::Px(4.0)), ..default() }).with_children(|d| {
+        gear_slot(d, "Helmet", g.helmet.as_ref(), UiAct::UnequipGear("helmet"));
+        d.spawn(Node { column_gap: Val::Px(4.0), ..default() }).with_children(|r| {
+            gear_slot(r, "Cape", g.cape.as_ref(), UiAct::UnequipGear("cape"));
+            gear_slot(r, "Suit", g.suit.as_ref(), UiAct::UnequipGear("suit"));
+            gear_slot(r, "Weapon", sc.weapon.as_ref(), UiAct::UnequipGear("weapon"));
+        });
+        gear_slot(d, "Shield", g.shield.as_ref(), UiAct::UnequipGear("shield"));
     });
-    if sc.weapon.is_some() {
-        label_button(p, "Unequip", UiAct::Unequip, 14.0);
-    }
     let stats = format!(
-        "Max hit {}\nAccuracy +{}\nRange {} tile{}\nFires every {:.1} s\n\nHitpoints {} / {}\nCombat level {}",
+        "Armour +{}   Defence {}\nMax hit {}   Accuracy +{}\nRange {} tile{}, every {:.1} s\nHitpoints {} / {}   Combat {}",
+        sc.armour,
+        sc.skills.level(Skill::Defence),
         max_hit(lvl, w.str),
         w.acc,
         w.range,
@@ -416,32 +495,207 @@ fn side_gear(p: &mut ChildSpawnerCommands, sc: &Scape) {
         sc.max_hp,
         sc.skills.combat_level()
     );
-    p.spawn(text(stats, 14.0, TEXT)).insert(Node { margin: UiRect::top(Val::Px(8.0)), ..default() });
-    p.spawn(text("Make blasters at a fabricator (iron plates). Left-click a creature to attack.", 11.0, DIM)).insert(Node { margin: UiRect::top(Val::Px(8.0)), ..default() });
+    p.spawn(text(stats, 13.0, TEXT)).insert(Node { margin: UiRect::top(Val::Px(4.0)), ..default() });
+    p.spawn(text("Click a slot to take it off. Wear armour from your pack; make it at the fabricator from chitin and iron.", 11.0, DIM)).insert(Node { margin: UiRect::top(Val::Px(6.0)), ..default() });
+}
+
+fn side_quests(p: &mut ChildSpawnerCommands, sc: &Scape) {
+    p.spawn(Node { justify_content: JustifyContent::SpaceBetween, margin: UiRect::bottom(Val::Px(4.0)), ..default() }).with_children(|h| {
+        h.spawn(text("Quests", 15.0, TEXT));
+        h.spawn(text(format!("Quest points: {}", sc.qp), 13.0, GOLD));
+    });
+    for q in QUESTS {
+        let st = sc.quests.get(q.id);
+        let (col, line) = match st.map(|s| s.s.as_str()) {
+            Some("done") => (GOOD, None),
+            Some(_) => {
+                let s = st.unwrap();
+                let step = &q.steps[(s.step as usize).min(q.steps.len() - 1)];
+                let have = if step.kind == "deliver" { count(&sc.inv, step.target) } else { s.p };
+                (GOLD, Some(format!("{} ({}/{})", step.text, have.min(step.n), step.n)))
+            }
+            None => (BAD, None),
+        };
+        p.spawn((Node { flex_direction: FlexDirection::Column, padding: UiRect::axes(Val::Px(5.0), Val::Px(2.0)), margin: UiRect::bottom(Val::Px(2.0)), ..default() }, BackgroundColor(INSET))).with_children(|r| {
+            r.spawn(text(q.name, 13.0, col));
+            if let Some(l) = line {
+                r.spawn(text(l, 11.0, DIM));
+            }
+        });
+    }
+    p.spawn(text("Red: not started. Yellow: on it. Green: done. Talk to colonists for work.", 11.0, DIM)).insert(Node { margin: UiRect::top(Val::Px(4.0)), ..default() });
+}
+
+/// A grid of item cells (locker / trade lists).
+fn item_grid(p: &mut ChildSpawnerCommands, items: &[Slot], cols: u16, act: impl Fn(usize) -> Option<UiAct>) {
+    p.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(cols, 52.0), column_gap: Val::Px(3.0), row_gap: Val::Px(3.0), ..default() }).with_children(|g| {
+        for (i, s) in items.iter().enumerate() {
+            let node = Node { height: Val::Px(40.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::Center, row_gap: Val::Px(1.0), border: UiRect::all(Val::Px(1.0)), ..default() };
+            let e = match act(i) {
+                Some(a) => button(g, a, node, INSET),
+                None => g.spawn((node, BackgroundColor(INSET), BorderColor::all(EDGE))).id(),
+            };
+            let c = rgb(item_color(&s.item));
+            g.commands().entity(e).with_children(|b| {
+                b.spawn((Node { width: Val::Px(16.0), height: Val::Px(12.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(c), BorderColor::all(Color::BLACK), Pickable::IGNORE));
+                let l = if s.qty > 1 { format!("{} x{}", short(&s.item), s.qty) } else { short(&s.item).to_string() };
+                b.spawn(text(l, 10.0, TEXT));
+            });
+        }
+    });
+}
+
+fn bank_panel(p: &mut ChildSpawnerCommands, items: &[Slot]) {
+    p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(12.0)), row_gap: Val::Px(6.0), width: Val::Px(470.0), max_width: Val::Percent(96.0), ..default() }))).with_children(|f| {
+        f.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, ..default() }).with_children(|h| {
+            h.spawn(text(format!("Colony locker  ({}/100)", items.len()), 20.0, GOLD));
+            label_button(h, "Close", UiAct::CloseBank, 14.0);
+        });
+        if items.is_empty() {
+            f.spawn(text("Empty. Click items in your pack to store them here.", 13.0, DIM));
+        } else {
+            item_grid(f, items, 8, |i| Some(UiAct::Withdraw(i, Qty::N(1))));
+        }
+        f.spawn(text("Click to take one out, right-click for more. Click your pack to put things in. Everything stacks in here.", 11.0, DIM));
+    });
+}
+
+fn trade_panel(p: &mut ChildSpawnerCommands, t: &super::TradeView) {
+    p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(12.0)), row_gap: Val::Px(6.0), width: Val::Px(520.0), max_width: Val::Percent(96.0), ..default() }))).with_children(|f| {
+        let title = if t.stage >= 2 { format!("Confirm trade with {}", t.name) } else { format!("Trading with {}", t.name) };
+        f.spawn(text(title, 20.0, GOLD));
+        f.spawn(Node { column_gap: Val::Px(12.0), ..default() }).with_children(|cols| {
+            for (mine, list) in [(true, &t.mine), (false, &t.theirs)] {
+                cols.spawn((Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.0), padding: UiRect::all(Val::Px(6.0)), width: Val::Px(240.0), min_height: Val::Px(150.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.25)), BorderColor::all(EDGE))).with_children(|c| {
+                    c.spawn(text(if mine { "Your offer".to_string() } else { format!("{}'s offer", t.name) }, 14.0, TEXT));
+                    if list.is_empty() {
+                        c.spawn(text("(nothing)", 12.0, DIM));
+                    } else {
+                        let stage = t.stage;
+                        item_grid(c, list, 4, |i| (mine && stage < 2).then_some(UiAct::Unoffer(i)));
+                    }
+                    let ok = if mine { t.me_ok } else { t.them_ok };
+                    c.spawn(text(if ok { "Accepted" } else { "Waiting..." }, 12.0, if ok { GOOD } else { DIM }));
+                });
+            }
+        });
+        let hint = if t.stage >= 2 { "Check the deal carefully, then accept again. Nothing changes hands until you both do." } else { "Click items in your pack to offer them; click your offer to take them back. Any change resets both accepts." };
+        f.spawn(text(hint, 11.0, if t.stage >= 2 { BAD } else { DIM }));
+        f.spawn(Node { column_gap: Val::Px(8.0), ..default() }).with_children(|b| {
+            label_button(b, if t.stage >= 2 { "Confirm" } else { "Accept" }, UiAct::TradeAccept, 15.0);
+            label_button(b, "Decline", UiAct::TradeDecline, 15.0);
+        });
+    });
+}
+
+fn lamp_panel(p: &mut ChildSpawnerCommands, sc: &Scape) {
+    p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(12.0)), row_gap: Val::Px(6.0), width: Val::Px(360.0), max_width: Val::Percent(96.0), ..default() }))).with_children(|f| {
+        f.spawn(text("Insight Lamp", 20.0, GOLD));
+        f.spawn(text("Rub it on a skill. Memories that aren't yours flood in.", 12.0, DIM));
+        f.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::flex(2, 1.0), column_gap: Val::Px(6.0), row_gap: Val::Px(6.0), ..default() }).with_children(|g| {
+            for k in SKILLS {
+                let e = button(g, UiAct::Rub(k), Node { padding: UiRect::all(Val::Px(6.0)), flex_direction: FlexDirection::Column, ..default() }, INSET);
+                let lvl = sc.skills.level(k);
+                g.commands().entity(e).with_children(|b| {
+                    b.spawn(text(format!("{} ({lvl})", k.label()), 14.0, TEXT));
+                    b.spawn(text(format!("+{} xp", fmt_xp(lamp_xp(lvl))), 12.0, GOOD));
+                });
+            }
+        });
+        label_button(f, "Cancel", UiAct::CloseLamp, 14.0);
+    });
+}
+
+fn dialog_box(p: &mut ChildSpawnerCommands, sc: &Scape) {
+    if let Some(d) = &sc.dialog {
+        p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(10.0)), row_gap: Val::Px(6.0), width: Val::Percent(100.0), ..default() }))).with_children(|f| {
+            f.spawn(Node { column_gap: Val::Px(10.0), ..default() }).with_children(|r| {
+                // portrait: their suit colour and initial
+                let c = super::look::suit_color(&d.name);
+                r.spawn((Node { width: Val::Px(52.0), height: Val::Px(52.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, border: UiRect::all(Val::Px(2.0)), border_radius: BorderRadius::all(Val::Px(4.0)), flex_shrink: 0.0, ..default() }, BackgroundColor(rgb(c)), BorderColor::all(EDGE_HI))).with_children(|b| {
+                    b.spawn((text(d.name.chars().next().unwrap_or('?').to_string(), 26.0, Color::WHITE), shadow()));
+                });
+                r.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0), flex_shrink: 1.0, ..default() }).with_children(|c| {
+                    let who = match &d.role {
+                        Some(role) => format!("{} ({role})", d.name),
+                        None => d.name.clone(),
+                    };
+                    c.spawn(text(who, 15.0, GOLD));
+                    c.spawn(text(d.text.clone(), 14.0, TEXT));
+                });
+            });
+            for o in &d.options {
+                let e = button(f, UiAct::Choose(o.id.clone()), Node { padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)), ..default() }, INSET);
+                f.commands().entity(e).with_children(|b| {
+                    b.spawn(text(o.text.clone(), 14.0, Color::srgb(0.55, 0.85, 1.0)));
+                });
+            }
+        });
+    } else if let Some((_, name)) = &sc.trade_req {
+        p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(10.0)), row_gap: Val::Px(6.0), ..default() }))).with_children(|f| {
+            f.spawn(text(format!("{name} wishes to trade with you."), 15.0, super::TRADE));
+            f.spawn(Node { column_gap: Val::Px(8.0), ..default() }).with_children(|b| {
+                label_button(b, "Trade", UiAct::TradeReq(true), 14.0);
+                label_button(b, "Ignore", UiAct::TradeReq(false), 14.0);
+            });
+        });
+    }
+}
+
+fn surge_banner(p: &mut ChildSpawnerCommands, sc: &Scape) {
+    let Some(sv) = &sc.surge else { return };
+    p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, padding: UiRect::axes(Val::Px(18.0), Val::Px(6.0)), row_gap: Val::Px(3.0), min_width: Val::Px(300.0), ..default() }))).insert(BorderColor::all(Color::srgb(0.75, 0.3, 1.0))).with_children(|f| {
+        f.spawn((text("RIFT SURGE", 18.0, Color::srgb(0.85, 0.55, 1.0)), shadow()));
+        f.spawn((text("", 13.0, TEXT), SurgeText));
+        if sv.phase == "boss" {
+            f.spawn((Node { width: Val::Px(260.0), height: Val::Px(8.0), ..default() }, BackgroundColor(Color::srgb(0.35, 0.05, 0.05)))).with_children(|b| {
+                b.spawn((Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(Color::srgb(0.7, 0.3, 1.0)), SurgeBar));
+            });
+        }
+    });
+}
+
+/// The surge banner's line: phase and countdown; and the boss's health (0..1).
+fn surge_status(sc: &Scape) -> (String, Option<f32>) {
+    let Some(sv) = &sc.surge else { return (String::new(), None) };
+    let secs = (sv.ends_tick.saturating_sub(sc.tick_n) as f32 * 0.6).round() as u32;
+    let clock = format!("{}:{:02}", secs / 60, secs % 60);
+    let boss = sc.npcs.values().filter(|a| a.kind == "leviathan" && a.anim != anim::DEAD).min_by_key(|a| super::chebyshev((a.tile.x, a.tile.y), (sv.at.x, sv.at.y)));
+    match sv.phase.as_str() {
+        "warning" => (format!("A rift is building near the landing site. It opens in {clock}."), None),
+        "open" => (format!("Creatures are pouring out! The big one comes through in {clock}."), None),
+        "boss" => (format!("The Void Leviathan is here. It leaves in {clock}."), boss.map(|b| (b.hp as f32 / b.max.max(1) as f32).clamp(0.0, 1.0))),
+        p => (p.to_string(), None),
+    }
 }
 
 fn fab_panel(p: &mut ChildSpawnerCommands, sc: &Scape) {
-    p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(12.0)), row_gap: Val::Px(4.0), width: Val::Px(470.0), max_width: Val::Percent(96.0), ..default() }))).with_children(|f| {
+    p.spawn((Blocker, panel(Node { flex_direction: FlexDirection::Column, padding: UiRect::all(Val::Px(10.0)), row_gap: Val::Px(4.0), width: Val::Px(620.0), max_width: Val::Percent(96.0), ..default() }))).with_children(|f| {
         f.spawn(Node { justify_content: JustifyContent::SpaceBetween, align_items: AlignItems::Center, margin: UiRect::bottom(Val::Px(4.0)), ..default() }).with_children(|h| {
             h.spawn(text("Fabricator", 20.0, GOLD));
             label_button(h, "Close", UiAct::CloseFab, 14.0);
         });
         let lvl = sc.skills.level(Skill::Fabrication);
+        // two columns: tools and weapons, armour
+        f.spawn(Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::flex(2, 1.0), column_gap: Val::Px(4.0), row_gap: Val::Px(3.0), ..default() }).with_children(|f| {
         for r in RECIPES {
             let has = r.inputs.iter().all(|(it, q)| count(&sc.inv, it) >= *q);
-            let ok = lvl >= r.level;
-            f.spawn((Node { align_items: AlignItems::Center, column_gap: Val::Px(8.0), padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)), ..default() }, BackgroundColor(INSET))).with_children(|row| {
-                row.spawn((Node { width: Val::Px(14.0), height: Val::Px(14.0), ..default() }, BackgroundColor(rgb(item_color(r.id)))));
+            let known = r.quest.is_none_or(|q| sc.quests.get(q).is_some_and(|s| s.s == "done"));
+            let ok = lvl >= r.level && known;
+            f.spawn((Node { align_items: AlignItems::Center, column_gap: Val::Px(6.0), padding: UiRect::axes(Val::Px(5.0), Val::Px(2.0)), ..default() }, BackgroundColor(INSET))).with_children(|row| {
+                row.spawn((Node { width: Val::Px(12.0), height: Val::Px(12.0), flex_shrink: 0.0, ..default() }, BackgroundColor(rgb(item_color(r.id)))));
                 row.spawn(Node { flex_direction: FlexDirection::Column, flex_grow: 1.0, ..default() }).with_children(|c| {
-                    c.spawn(text(format!("{}  (lvl {}, {} xp)", item_name(r.id), r.level, fmt_xp(r.xp)), 14.0, if ok { TEXT } else { BAD }));
-                    let need: Vec<String> = r.inputs.iter().map(|(it, q)| format!("{q} {} ({})", item_name(it), count(&sc.inv, it))).collect();
-                    c.spawn(text(need.join(" + "), 11.0, if has { GOOD } else { DIM }));
+                    let lock = if known { String::new() } else { " - quest".into() };
+                    c.spawn(text(format!("{} (lvl {}{lock})", item_name(r.id), r.level), 12.0, if ok { TEXT } else { BAD }));
+                    let need: Vec<String> = r.inputs.iter().map(|(it, q)| format!("{q} {} ({})", short(it), count(&sc.inv, it))).collect();
+                    c.spawn(text(need.join(" + "), 10.0, if has { GOOD } else { DIM }));
                 });
                 if ok && has {
-                    label_button(row, "Make", UiAct::Make(r.id), 14.0);
+                    label_button(row, "Make", UiAct::Make(r.id), 12.0);
                 }
             });
         }
+        });
         f.spawn(text("Making keeps going while you have the materials. Walk away to stop.", 11.0, DIM));
     });
 }
@@ -456,12 +710,12 @@ pub fn refresh(
     mut roots: Query<&mut Visibility, (With<ScapeUi>, Without<NamePrompt>)>,
     mut lines: Query<(&ChatLine, &mut Text, &mut TextColor), (Without<ChatInput>, Without<HoverText>, Without<StatusText>, Without<HpText>, Without<RunText>)>,
     mut input: Query<&mut Text, (With<ChatInput>, Without<ChatLine>, Without<HoverText>, Without<StatusText>, Without<HpText>, Without<RunText>)>,
-    mut misc: Query<(&mut Text, Has<HoverText>, Has<StatusText>, Has<HpText>, Has<RunText>), (Without<ChatLine>, Without<ChatInput>)>,
-    layers: Query<(Entity, Has<SideContent>, Has<FabRoot>, Has<CtxRoot>), Or<(With<SideContent>, With<FabRoot>, With<CtxRoot>)>>,
+    mut misc: Query<(&mut Text, Has<HoverText>, Has<StatusText>, Has<HpText>, Has<RunText>, Has<SurgeText>), (Without<ChatLine>, Without<ChatInput>)>,
+    layers: Query<(Entity, Has<SideContent>, Has<FabRoot>, Has<CtxRoot>, Has<DialogRoot>, Has<SurgeRoot>), Or<(With<SideContent>, With<FabRoot>, With<CtxRoot>, With<DialogRoot>, With<SurgeRoot>)>>,
     children: Query<&Children>,
     mut tabs: Query<(&TabBtn, &mut BackgroundColor, &Hovered)>,
     mut btns: Query<(&Hovered, &mut BorderColor), With<Btn>>,
-    mut needle: Query<&mut UiTransform, With<Needle>>,
+    (mut needle, mut boss_bar): (Query<&mut UiTransform, With<Needle>>, Query<&mut Node, With<SurgeBar>>),
     win: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut last: Local<(u8, bool, Option<(Vec2, usize, String)>)>,
 ) {
@@ -491,17 +745,27 @@ pub fn refresh(
         }
     }
     let hp_frac = sc.hp as f32 / sc.max_hp.max(1) as f32;
-    for (mut t, hover, status, hp, run) in &mut misc {
+    let (surge_line, boss) = surge_status(&sc);
+    if let (Some(f), Ok(mut n)) = (boss, boss_bar.single_mut()) {
+        n.width = Val::Percent(f * 100.0);
+    }
+    for (mut t, hover, status, hp, run, surge) in &mut misc {
         let want = if hover {
             st.hover.clone()
         } else if status {
             let bots = sc.players.values().filter(|a| a.role.is_some()).count();
             let others = sc.players.len().saturating_sub(1 + bots);
-            format!("MarsScape - {} - {} other player{} and {bots} colonist{} here", sc.status, others, if others == 1 { "" } else { "s" }, if bots == 1 { "" } else { "s" })
+            if sc.cave.is_some() {
+                format!("MarsScape - {} - {} other player{} down here", sc.status, others, if others == 1 { "" } else { "s" })
+            } else {
+                format!("MarsScape - {} - {} other player{} and {bots} colonist{} here", sc.status, others, if others == 1 { "" } else { "s" }, if bots == 1 { "" } else { "s" })
+            }
         } else if hp {
             format!("{}", sc.hp)
         } else if run {
             (if sc.run { "RUN" } else { "walk" }).into()
+        } else if surge {
+            surge_line.clone()
         } else {
             continue;
         };
@@ -537,16 +801,36 @@ pub fn refresh(
             commands.entity(root).with_children(|p| match st.tab {
                 1 => side_skills(p, &sc),
                 2 => side_gear(p, &sc),
+                3 => side_quests(p, &sc),
                 _ => side_pack(p, &sc),
             });
         }
+        // the centre panel: a trade beats the locker beats a lamp beats the fabricator
         if let Some((root, ..)) = layers.iter().find(|l| l.2) {
             for c in children.get(root).map(|c| c.iter().collect::<Vec<_>>()).unwrap_or_default() {
                 commands.entity(c).despawn();
             }
-            if st.fab_open {
+            if let Some(t) = &sc.trade {
+                commands.entity(root).with_children(|p| trade_panel(p, t));
+            } else if let Some(b) = &sc.bank {
+                commands.entity(root).with_children(|p| bank_panel(p, b));
+            } else if sc.lamp.is_some() {
+                commands.entity(root).with_children(|p| lamp_panel(p, &sc));
+            } else if st.fab_open {
                 commands.entity(root).with_children(|p| fab_panel(p, &sc));
             }
+        }
+        if let Some((root, ..)) = layers.iter().find(|l| l.4) {
+            for c in children.get(root).map(|c| c.iter().collect::<Vec<_>>()).unwrap_or_default() {
+                commands.entity(c).despawn();
+            }
+            commands.entity(root).with_children(|p| dialog_box(p, &sc));
+        }
+        if let Some((root, ..)) = layers.iter().find(|l| l.5) {
+            for c in children.get(root).map(|c| c.iter().collect::<Vec<_>>()).unwrap_or_default() {
+                commands.entity(c).despawn();
+            }
+            commands.entity(root).with_children(|p| surge_banner(p, &sc));
         }
     }
     let sig = st.ctx.as_ref().map(|c| (c.at, c.opts.len(), c.opts.first().map_or(String::new(), |o| o.label.clone())));
@@ -569,7 +853,8 @@ pub fn refresh(
                                 let e = button(c, o.act.clone(), Node { padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)), ..default() }, INSET);
                                 let col = match o.act {
                                     UiAct::Attack(_) => BAD,
-                                    UiAct::Node(_) | UiAct::Item(_, "equip") | UiAct::Item(_, "eat") => GOLD,
+                                    UiAct::Node(_) | UiAct::Item(_, "equip" | "wear" | "eat" | "rub") | UiAct::Talk(_) => GOLD,
+                                    UiAct::TradeWith(_) => super::TRADE,
                                     UiAct::Cancel => DIM,
                                     _ => TEXT,
                                 };
@@ -826,6 +1111,10 @@ pub fn minimap(scape: Option<ResMut<Scape>>, orbit: Option<Res<Orbit>>, handles:
         let col = match nd.kind.as_str() {
             "fabricator" => [80, 230, 255],
             "rift" => [255, 60, 20],
+            "locker" => [80, 255, 120],
+            "pit" | "ladder" => [255, 200, 60],
+            "void_vein" => [190, 90, 255],
+            "fossil" => [255, 220, 150],
             "ice" => [220, 240, 255],
             "hematite" => [150, 90, 90],
             "outcrop" => [240, 210, 150],
@@ -835,6 +1124,12 @@ pub fn minimap(scape: Option<ResMut<Scape>>, orbit: Option<Res<Orbit>>, handles:
     }
     for a in sc.npcs.values().filter(|a| a.anim != anim::DEAD) {
         dot(a.pos, [255, 230, 30], 3);
+    }
+    // the Rift Surge: a pulsing magenta blob
+    if let (Some(sv), true) = (&sc.surge, sc.cave.is_none()) {
+        let (x, z) = super::grid::tile_center(sv.at);
+        let size = 6 + ((now * 4.0).sin() * 2.0) as i32;
+        dot(Vec3::new(x, me.y, z), [255, 60, 255], size);
     }
     let my = sc.me;
     for (i, a) in sc.players.iter() {

@@ -7,10 +7,15 @@
 //! rules run in-process (sim.rs) with a few bot astronauts, so the mode is always playable.
 //! The client only predicts paths (A*, grid.rs) and interpolates between the 600 ms ticks.
 //!
+//! Also: the lava tube under each site (a pit on the surface, its own room underground, cave.rs),
+//! the colony locker (bank), trading between players, colonist quests with Insight Lamps, armour,
+//! and Rift Surges (a big rift opens, waves pour out, then a Void Leviathan).
+//!
 //! Started from the menu's MARSSCAPE card (or `--mode scape`); the buggy is not spawned.
 //! Test hook: `--mmo-script "wait:2,walk:6,3,act:regolith@8,tab:skills,chat:hi,shot:a.png,quit"`
 //! (see `script`), `--mmo-name NAME` skips the name prompt.
 
+mod cave;
 mod grid;
 mod look;
 mod net;
@@ -24,11 +29,13 @@ use crate::menu::{Menu, SiteUnloaded};
 use crate::terrain::Site;
 use crate::{Args, LoadFailed, Loading};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use bevy::window::PrimaryWindow;
+use cave::Gnd;
 use grid::{WalkGrid, tile_of};
 use look::{Ctx, Kit};
 use net::{NetEvent, Ws};
@@ -65,6 +72,8 @@ impl Plugin for MmoPlugin {
             .add_message::<UiMsg>()
             // runs in every mode: leaving MARSSCAPE for a driving mode must tear it down too
             .add_systems(Update, unload.before(start))
+            // lights / sky / terrain for the lava tube, restored on the way out (any mode)
+            .add_systems(Update, cave_env.after(unload))
             .add_systems(
                 Update,
                 (
@@ -79,6 +88,7 @@ impl Plugin for MmoPlugin {
                     pick::hover_ring,
                     ui_actions,
                     move_actors,
+                    dress_me,
                     animate,
                     orbit_camera,
                     effects,
@@ -149,6 +159,33 @@ pub struct XpDrop {
 enum Intent {
     None,
     Fab(u32),
+    /// walking over to ask this player to trade
+    Trade(u32),
+}
+
+/// The trade window as the server last described it.
+pub struct TradeView {
+    pub stage: u8,
+    pub name: String,
+    pub mine: Vec<Slot>,
+    pub theirs: Vec<Slot>,
+    pub me_ok: bool,
+    pub them_ok: bool,
+}
+
+/// A colonist talking to you.
+pub struct DialogView {
+    pub name: String,
+    pub role: Option<String>,
+    pub text: String,
+    pub options: Vec<DialogOpt>,
+}
+
+/// The Rift Surge going on: phase ("warning" / "open" / "boss"), where, when the phase ends.
+pub struct SurgeView {
+    pub phase: String,
+    pub at: IVec2,
+    pub ends_tick: u64,
 }
 
 #[derive(Resource)]
@@ -184,11 +221,38 @@ pub struct Scape {
     /// UI needs a rebuild (inventory / skills / gear changed)
     pub dirty: bool,
     pub chat_dirty: bool,
+    /// the lava tube we're in (None = on the surface) and its geometry
+    pub cave: Option<Arc<cave::CaveMap>>,
+    cave_root: Option<Entity>,
+    /// the surface site's room id (its cave is "<site_room>~cave")
+    site_room: String,
+    /// login token from the last welcome (kept in memory for travel, even when it isn't stored)
+    token: String,
+    pub gear: Gear,
+    /// total armour bonus
+    pub armour: i32,
+    /// my astronaut needs dressing in `gear`
+    gear_dirty: bool,
+    pub quests: HashMap<String, QuestSt>,
+    pub qp: u32,
+    /// the colony locker is open: its contents
+    pub bank: Option<Vec<Slot>>,
+    pub trade: Option<TradeView>,
+    /// someone asked to trade: (id, name)
+    pub trade_req: Option<(u32, String)>,
+    pub dialog: Option<DialogView>,
+    pub surge: Option<SurgeView>,
+    /// rubbing the Insight Lamp in this slot: pick a skill
+    pub lamp: Option<usize>,
+    /// frame the camera for a new place (after travel)
+    cam_reset: bool,
+    greeted: bool,
 }
 
 pub const GAME: Color = Color::srgb(1.0, 0.92, 0.55);
 pub const SAY: Color = Color::srgb(0.65, 0.85, 1.0);
 pub const WARN: Color = Color::srgb(1.0, 0.45, 0.35);
+pub const TRADE: Color = Color::srgb(0.95, 0.55, 1.0);
 
 impl Scape {
     pub fn say(&mut self, text: impl Into<String>, c: Color) {
@@ -219,8 +283,27 @@ impl Scape {
         self.me.and_then(|m| self.players.get(&m)).map(|a| a.pos)
     }
 
+    /// The ground under us: the site's terrain, or the lava tube.
+    pub fn gnd<'a>(&'a self, site: &'a Site) -> Gnd<'a> {
+        match self.cave.as_deref() {
+            Some(c) => Gnd::Cave(c),
+            None => Gnd::Site(site),
+        }
+    }
+
+    /// Tokens are per site; the site's cave uses the same one.
+    fn token_key(&self) -> String {
+        format!("{}/{}", self.url, self.site_room)
+    }
+
     fn hello(&mut self) {
-        let token = if self.persist { store::token(&format!("{}/{}", self.url, self.room)) } else { String::new() };
+        let token = if !self.token.is_empty() {
+            self.token.clone()
+        } else if self.persist {
+            store::token(&self.token_key())
+        } else {
+            String::new()
+        };
         let m = C2S::Hello { ver: VER, name: self.name.clone(), token, bounds: [self.grid.min.x, self.grid.min.y, self.grid.max.x, self.grid.max.y], spawn: [self.spawn.x, self.spawn.y] };
         self.send(m);
     }
@@ -230,6 +313,7 @@ impl Scape {
         let from = self.my_tile()?;
         let path = self.grid.find_path(from, t, |x| x == t);
         self.intent = Intent::None;
+        self.dialog = None;
         let end = path.last().copied();
         self.send(C2S::Walk { path: path.iter().map(|p| [p.x, p.y]).collect(), run: run || self.run });
         if let Some(e) = end {
@@ -295,7 +379,11 @@ impl Scape {
         let Some(item) = self.inv.get(slot).cloned().flatten() else { return };
         match verb {
             "drop" => self.send(C2S::Drop { slot }),
-            "equip" => self.send(C2S::Equip { slot }),
+            "equip" | "wear" => self.send(C2S::Equip { slot }),
+            "rub" => {
+                self.lamp = Some(slot);
+                self.dirty = true;
+            }
             "eat" => self.send(C2S::Eat { slot }),
             _ => self.say(item_examine(&item.item).to_string(), GAME),
         }
@@ -309,7 +397,82 @@ impl Scape {
     }
 
     pub fn unequip(&mut self) {
-        self.send(C2S::Unequip);
+        self.send(C2S::Unequip { gear: None });
+    }
+
+    pub fn unequip_gear(&mut self, slot: &str) {
+        self.send(C2S::Unequip { gear: Some(slot.to_string()) });
+    }
+
+    /// Talk to a colonist (the server walks you over).
+    pub fn talk(&mut self, id: u32) {
+        let Some(a) = self.players.get(&id) else { return };
+        let t = a.tile;
+        self.intent = Intent::None;
+        self.dialog = None;
+        if let Some(w) = self.grid.world(t) {
+            self.marker = Some((w, true));
+        }
+        self.send(C2S::Talk { id });
+    }
+
+    /// Ask a player to trade (walking closer first if they're far).
+    pub fn trade_with(&mut self, id: u32) {
+        let (Some(a), Some(me)) = (self.players.get(&id), self.my_tile()) else { return };
+        let t = a.tile;
+        if chebyshev((t.x, t.y), (me.x, me.y)) <= 8 {
+            self.send(C2S::TradeRequest { id });
+            self.intent = Intent::None;
+        } else {
+            self.approach(t, 2, None);
+            self.intent = Intent::Trade(id);
+        }
+    }
+
+    pub fn choose(&mut self, option: &str) {
+        self.dialog = None;
+        self.dirty = true;
+        self.send(C2S::DialogChoose { option: option.to_string() });
+    }
+
+    pub fn rub(&mut self, skill: Skill) {
+        if let Some(slot) = self.lamp.take() {
+            self.send(C2S::Rub { slot, skill: skill.key().into() });
+        }
+        self.dirty = true;
+    }
+
+    /// A node of this kind within reach (1 tile).
+    pub fn near_kind(&self, kind: &str) -> Option<u32> {
+        let me = self.my_tile()?;
+        self.nodes.iter().find(|(_, n)| n.kind == kind && chebyshev((n.tile.x, n.tile.y), (me.x, me.y)) <= 1).map(|(i, _)| *i)
+    }
+
+    pub fn bank_deposit(&mut self, slot: usize, qty: Qty) {
+        self.send(C2S::BankDeposit { slot, qty });
+    }
+
+    pub fn bank_withdraw(&mut self, idx: usize, qty: Qty) {
+        self.send(C2S::BankWithdraw { idx, qty });
+    }
+
+    pub fn trade_offer(&mut self, slot: usize, qty: Qty) {
+        self.send(C2S::TradeOffer { slot, qty });
+    }
+
+    pub fn trade_remove(&mut self, idx: usize) {
+        self.send(C2S::TradeRemove { idx, qty: Qty::All });
+    }
+
+    pub fn trade_accept(&mut self) {
+        self.send(C2S::TradeAccept);
+    }
+
+    pub fn trade_decline(&mut self) {
+        self.send(C2S::TradeDecline);
+        self.trade = None;
+        self.trade_req = None;
+        self.dirty = true;
     }
 
     pub fn fab_near(&self) -> Option<u32> {
@@ -390,6 +553,7 @@ fn start(
         Link::Online { ws: Ws::connect(&net::room_url(&url, &room)), open: false, ever: false, tries: 0, ping_at: 0.0, since: -1.0 }
     };
     let offline = matches!(link, Link::Offline(_));
+    let room_id = room.clone();
     let mut sc = Scape {
         link,
         url: url.clone(),
@@ -420,6 +584,23 @@ fn start(
         splat_k: 0,
         dirty: true,
         chat_dirty: true,
+        cave: None,
+        cave_root: None,
+        site_room: room_id,
+        token: String::new(),
+        gear: Gear::default(),
+        armour: 0,
+        gear_dirty: false,
+        quests: HashMap::new(),
+        qp: 0,
+        bank: None,
+        trade: None,
+        trade_req: None,
+        dialog: None,
+        surge: None,
+        lamp: None,
+        cam_reset: false,
+        greeted: false,
     };
     if offline {
         sc.hello();
@@ -501,6 +682,7 @@ fn name_entry(
 fn network(
     mut commands: Commands,
     scape: Option<ResMut<Scape>>,
+    site: Option<Res<Site>>,
     time: Res<Time>,
     real: Res<Time<Real>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -508,9 +690,11 @@ fn network(
     mut kit: ResMut<Kit>,
     mut st: ResMut<UiState>,
 ) {
-    let Some(mut sc) = scape else { return };
+    let (Some(mut sc), Some(site)) = (scape, site) else { return };
     let now = real.elapsed_secs();
     let mut msgs = Vec::new();
+    // a `travel` makes the server close this socket: that's not a lost connection
+    let mut traveling = false;
     let mut go_offline: Option<String> = None;
     let sc_ref = &mut *sc;
     match &mut sc_ref.link {
@@ -531,7 +715,10 @@ fn network(
                         *tries = 0;
                         *ping_at = now + 20.0;
                     }
-                    NetEvent::Msg(m) => msgs.push(m),
+                    NetEvent::Msg(m) => {
+                        traveling |= matches!(m, S2C::Travel { .. });
+                        msgs.push(m);
+                    }
                     NetEvent::Closed(why) => closed = Some(why),
                 }
             }
@@ -539,7 +726,9 @@ fn network(
                 *ping_at = now + 20.0;
                 ws.send(&C2S::Ping);
             }
-            if let Some(why) = closed {
+            if traveling {
+                // handled by `apply` (reconnects to the new room)
+            } else if let Some(why) = closed {
                 if !*ever {
                     go_offline = Some(why);
                 } else {
@@ -578,7 +767,40 @@ fn network(
     }
     let mut cx = Ctx { commands: &mut commands, meshes: &mut meshes, mats: &mut mats, kit: &mut kit };
     for m in msgs {
-        apply(&mut sc, &mut cx, m, &mut st);
+        apply(&mut sc, &mut cx, m, &mut st, &site);
+    }
+}
+
+/// `travel`: the server moved us to another room (down the pit / up the ladder). Online, connect
+/// there with the same token; offline, the world switches over and sends a new welcome.
+fn travel(sc: &mut Scape, cx: &mut Ctx, st: &mut UiState, site: &Site, room: String) {
+    let down = room.ends_with("~cave");
+    sc.say(if down { "You climb down into the lava tube..." } else { "You climb back up towards the daylight..." }, GAME);
+    clear_world(sc, cx);
+    sc.me = None;
+    sc.room = room.clone();
+    sc.bank = None;
+    sc.trade = None;
+    sc.trade_req = None;
+    sc.dialog = None;
+    sc.lamp = None;
+    sc.intent = Intent::None;
+    st.fab_open = false;
+    st.ctx = None;
+    sc.dirty = true;
+    let mut out = Vec::new();
+    match &mut sc.link {
+        Link::Offline(sim) => {
+            sim.travel(&room);
+            out = sim.take_out();
+        }
+        _ => {
+            sc.link = Link::Online { ws: Ws::connect(&net::room_url(&sc.url, &room)), open: false, ever: true, tries: 0, ping_at: 0.0, since: -1.0 };
+            st.hello_sent = false;
+        }
+    }
+    for m in out {
+        apply(sc, cx, m, st, site);
     }
 }
 
@@ -600,12 +822,48 @@ fn spawn_actor(sc: &mut Scape, cx: &mut Ctx, id: u32, name: String, role: Option
 
 fn clear_world(sc: &mut Scape, cx: &mut Ctx) {
     for (_, a) in sc.players.drain().chain(sc.npcs.drain()) {
-        cx.commands.entity(a.e).despawn();
+        if let Ok(mut e) = cx.commands.get_entity(a.e) {
+            e.despawn();
+        }
     }
     for (_, n) in sc.nodes.drain() {
-        cx.commands.entity(n.e).despawn();
+        if let Ok(mut e) = cx.commands.get_entity(n.e) {
+            e.despawn();
+        }
     }
     sc.grid.blocked.clear();
+}
+
+/// Switch the ground between the surface and the lava tube for a welcome.
+fn set_place(sc: &mut Scape, cx: &mut Ctx, site: &Site, cave_info: Option<CaveInfo>) {
+    match cave_info {
+        Some(ci) => {
+            // far below the terrain (which is hidden while we're down there)
+            let y0 = site.spawn.y - 3000.0;
+            let Some(map) = cave::CaveMap::from_rle(ci.w as usize, ci.h as usize, &ci.rle, y0) else {
+                warn!("marsscape: bad cave map ({}x{})", ci.w, ci.h);
+                return;
+            };
+            let map = Arc::new(map);
+            if let Some(r) = sc.cave_root.take() {
+                cx.commands.entity(r).despawn();
+            }
+            sc.cave_root = Some(look::cave(cx, &map));
+            sc.grid = WalkGrid::new_cave(map.clone());
+            sc.cave = Some(map);
+            sc.cam_reset = true;
+            info!("marsscape: in the lava tube ({}x{} tiles, {} floor)", ci.w, ci.h, sc.cave.as_ref().map_or(0, |c| c.grid.iter().filter(|&&v| v == 1).count()));
+        }
+        None => {
+            if sc.cave.take().is_some() {
+                if let Some(r) = sc.cave_root.take() {
+                    cx.commands.entity(r).despawn();
+                }
+                sc.grid = WalkGrid::new(site);
+                sc.cam_reset = true;
+            }
+        }
+    }
 }
 
 fn actor_mut<'a>(sc: &'a mut Scape, w: Who) -> Option<&'a mut Actor> {
@@ -615,17 +873,34 @@ fn actor_mut<'a>(sc: &'a mut Scape, w: Who) -> Option<&'a mut Actor> {
     }
 }
 
-fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState) {
+fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
     match m {
-        S2C::Welcome { id, token, tick_ms, you, players, nodes, npcs } => {
+        S2C::Welcome { id, token, tick_ms, you, players, nodes, npcs, room, event, cave, exit: _, tick } => {
             clear_world(sc, cx);
+            sc.tick_n = tick;
+            let in_cave = room.as_deref() == Some("cave") || cave.is_some();
+            set_place(sc, cx, site, if in_cave { cave } else { None });
             sc.me = Some(id);
             if let Some(n) = you.name.clone().filter(|n| !n.is_empty()) {
                 sc.name = n;
             }
             if !token.is_empty() && !sc.url.is_empty() && sc.persist {
-                store::set_token(&format!("{}/{}", sc.url, sc.room), &token);
+                store::set_token(&sc.token_key(), &token);
             }
+            if !token.is_empty() {
+                sc.token = token;
+            }
+            sc.gear = you.gear.clone();
+            sc.armour = you.gear.bonus();
+            sc.gear_dirty = true;
+            sc.quests = you.quests.clone();
+            sc.qp = you.quest_points.max(quest_points(&sc.quests));
+            sc.bank = None;
+            sc.trade = None;
+            sc.trade_req = None;
+            sc.dialog = None;
+            sc.lamp = None;
+            sc.surge = event.filter(|e| e.phase != "ended").map(|e| SurgeView { phase: e.phase, at: IVec2::new(e.tx, e.tz), ends_tick: tick + e.ends_in });
             sc.tick_s = tick_ms.max(100) as f32 / 1000.0;
             sc.skills = you.skills;
             sc.inv = you.inv;
@@ -650,7 +925,7 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState) {
             }
             for n in npcs {
                 spawn_actor(sc, cx, n.id, String::new(), None, true, &n.kind, IVec2::new(n.tx, n.tz), n.hp, n.max);
-                if n.hp <= 0 {
+                if n.hp <= 0 || n.dead {
                     if let Some(a) = sc.npcs.get_mut(&n.id) {
                         a.anim = anim::DEAD;
                     }
@@ -658,10 +933,19 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState) {
             }
             if sc.online() {
                 sc.status = format!("online - {}", sc.url);
-                sc.say(format!("Welcome to MarsScape, {}.", sc.name), GAME);
+                if !sc.greeted {
+                    sc.say(format!("Welcome to MarsScape, {}.", sc.name), GAME);
+                }
+            }
+            if sc.cave.is_some() {
+                sc.status = format!("{} - lava tube", if sc.online() { "online" } else { "offline" });
             }
             sc.dirty = true;
-            sc.say("Left-click the ground to walk, a rock to mine it. Right-click anything for more options.", ui::TIP);
+            if !sc.greeted {
+                sc.say("Left-click the ground to walk, a rock to mine it. Right-click anything for more options.", ui::TIP);
+                sc.say("Talk to colonists for work. The pit near the landing site leads down into a lava tube.", ui::TIP);
+            }
+            sc.greeted = true;
             info!("marsscape: welcome: id {id}, {} players, {} nodes, {} creatures", sc.players.len(), sc.nodes.len(), sc.npcs.len());
         }
         S2C::Tick { n, p, m } => {
@@ -671,6 +955,14 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState) {
             }
             for (id, tx, tz, an, hp) in m {
                 set_tile(sc, Who::N(id), IVec2::new(tx, tz), an, Some(hp));
+            }
+            // close enough to ask for that trade
+            if let Intent::Trade(id) = sc.intent {
+                let near = sc.players.get(&id).zip(sc.my_tile()).is_some_and(|(a, me)| chebyshev((a.tile.x, a.tile.y), (me.x, me.y)) <= 8);
+                if near {
+                    sc.intent = Intent::None;
+                    sc.send(C2S::TradeRequest { id });
+                }
             }
             // arrived next to the fabricator we walked to
             if let Intent::Fab(f) = sc.intent {
@@ -789,6 +1081,83 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState) {
         }
         S2C::Msg { text } => sc.say(text, GAME),
         S2C::Err { text } => sc.say(text, WARN),
+        S2C::Gear { weapon, helmet, suit, shield, cape, bonus } => {
+            sc.weapon = weapon;
+            sc.gear = Gear { helmet, suit, shield, cape };
+            sc.armour = bonus;
+            sc.gear_dirty = true;
+            sc.dirty = true;
+        }
+        S2C::Travel { room } => travel(sc, cx, st, site, room),
+        S2C::Bank { items, .. } => {
+            sc.bank = Some(items);
+            st.fab_open = false;
+            sc.dirty = true;
+        }
+        S2C::TradeRequest { from, name } => {
+            sc.say(format!("{name} wishes to trade with you."), TRADE);
+            sc.trade_req = Some((from, name));
+            sc.dirty = true;
+        }
+        S2C::Trade { stage, name, mine, theirs, accepted, .. } => {
+            sc.trade = Some(TradeView { stage, name, mine, theirs, me_ok: accepted.me, them_ok: accepted.them });
+            sc.trade_req = None;
+            sc.bank = None;
+            st.fab_open = false;
+            sc.dirty = true;
+        }
+        S2C::TradeEnd { result, reason } => {
+            sc.trade = None;
+            if result == "done" {
+                sc.say("Trade accepted.", TRADE);
+            } else if reason.is_empty() {
+                sc.say("Trade cancelled.", TRADE);
+            } else {
+                sc.say(format!("Trade cancelled: {reason}"), TRADE);
+            }
+            sc.dirty = true;
+        }
+        S2C::Dialog { name, role, text, options, .. } => {
+            sc.dialog = Some(DialogView { name, role, text, options });
+            sc.dirty = true;
+        }
+        S2C::DialogEnd => {
+            sc.dialog = None;
+            sc.dirty = true;
+        }
+        S2C::Quest { id, state, step, progress, qp, .. } => {
+            sc.quests.insert(id, QuestSt { s: state, step, p: progress });
+            sc.qp = qp.max(quest_points(&sc.quests));
+            sc.dirty = true;
+        }
+        S2C::Event(e) => {
+            if e.phase == "ended" || e.phase == "idle" {
+                sc.surge = None;
+            } else {
+                let at = IVec2::new(e.tx, e.tz);
+                if sc.surge.is_none() {
+                    info!("marsscape: rift surge {} at {at:?}", e.phase);
+                }
+                sc.surge = Some(SurgeView { phase: e.phase, at, ends_tick: sc.tick_n + e.ends_in });
+            }
+            sc.dirty = true;
+        }
+        S2C::NpcSpawn { npc } => {
+            spawn_actor(sc, cx, npc.id, String::new(), None, true, &npc.kind, IVec2::new(npc.tx, npc.tz), npc.hp, npc.max);
+            if let Some(a) = sc.npcs.get_mut(&npc.id) {
+                a.combat_t = 99.0;
+                if npc.dead || npc.hp <= 0 {
+                    a.anim = anim::DEAD;
+                }
+            }
+        }
+        S2C::NpcDespawn { id } => {
+            if let Some(a) = sc.npcs.remove(&id) {
+                if let Ok(mut e) = cx.commands.get_entity(a.e) {
+                    e.despawn();
+                }
+            }
+        }
         S2C::Unknown => {}
     }
 }
@@ -882,7 +1251,7 @@ fn keys(keys: Res<ButtonInput<KeyCode>>, mut kb: MessageReader<bevy::input::keyb
         sc.run = !sc.run;
         sc.dirty = true;
     }
-    for (k, tab) in [(KeyCode::F1, 0u8), (KeyCode::F2, 1), (KeyCode::F3, 2)] {
+    for (k, tab) in [(KeyCode::F1, 0u8), (KeyCode::F2, 1), (KeyCode::F3, 2), (KeyCode::F4, 3)] {
         if keys.just_pressed(k) {
             st.tab = tab;
             sc.dirty = true;
@@ -903,6 +1272,11 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
         }
         Target::Player(id) => {
             let Some(a) = sc.players.get(&id) else { return Vec::new() };
+            let mut o = Vec::new();
+            match &a.role {
+                Some(r) => o.push(Opt::new(format!("Talk-to {} ({r})", a.name), UiAct::Talk(id)).on(t)),
+                None => o.push(Opt::new(format!("Trade with {}", a.name), UiAct::TradeWith(id)).on(t)),
+            }
             let ex = match a.role.as_deref() {
                 Some("guard") => format!("{}, colony guard. Say \"help\" and they'll watch your back.", a.name),
                 Some("medic") => format!("{}, the colony medic. Patches up anyone who's hurt.", a.name),
@@ -910,7 +1284,8 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
                 Some(r) => format!("{}, a colonist ({r}).", a.name),
                 None => format!("{}, a fellow astronaut.", a.name),
             };
-            vec![Opt::new(format!("Examine {}", a.name), UiAct::Say(ex)).on(t)]
+            o.push(Opt::new(format!("Examine {}", a.name), UiAct::Say(ex)).on(t));
+            o
         }
         Target::Node(id) => {
             let Some(n) = sc.nodes.get(&id) else { return Vec::new() };
@@ -919,6 +1294,9 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
             match n.kind.as_str() {
                 "fabricator" => o.push(Opt::new("Use Fabricator".into(), UiAct::Node(id)).on(t)),
                 "rift" => {}
+                "locker" => o.push(Opt::new("Open Colony locker".into(), UiAct::Node(id)).on(t)),
+                "pit" => o.push(Opt::new("Climb-down Lava-tube pit".into(), UiAct::Node(id)).on(t)),
+                "ladder" => o.push(Opt::new("Climb-up Ladder".into(), UiAct::Node(id)).on(t)),
                 k => {
                     if let Some(d) = node_def(k) {
                         o.push(Opt::new(format!("{} {name}", d.verb), UiAct::Node(id)).on(t));
@@ -927,6 +1305,9 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
             }
             let ex = match n.kind.as_str() {
                 "fabricator" => "Turns raw materials into useful things.",
+                "locker" => "The colony's lockers. Whatever you put in stays safe, even if you don't.",
+                "pit" => "A collapsed lava tube. A rope goes down into the dark, and something down there glows.",
+                "ladder" => "Daylight, a long way up.",
                 "rift" => "A tear into the void. Stars where the ground should be, and things crawling out.",
                 k => node_def(k).map_or("", |d| d.examine),
             };
@@ -939,21 +1320,29 @@ fn target_options(sc: &Scape, t: pick::Target) -> Vec<Opt> {
 /// What's under the cursor, as menu options (first = left-click default): every thing under it
 /// (best first, see `pick::under`), then "Walk here", then astronauts (clicking a person walks
 /// there, like stepping up to them), then Cancel.
-fn options_at(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, site: &Site, pr: &pick::PickRects) -> Vec<Opt> {
+fn options_at(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, g: Gnd, pr: &pick::PickRects) -> Vec<Opt> {
     let (camera, gt) = cam;
     let mut opts = Vec::new();
     let mut people = Vec::new();
-    for t in pick::under(pr, sc, cursor, cam, site) {
+    for t in pick::under(pr, sc, cursor, cam, g) {
         let o = target_options(sc, t);
-        if matches!(t, pick::Target::Player(_)) {
+        // other astronauts come after "Walk here" (clicking them walks up to them); colonists talk
+        let human = matches!(t, pick::Target::Player(id) if sc.players.get(&id).is_some_and(|a| a.role.is_none()));
+        if human {
             people.extend(o);
         } else {
             opts.extend(o);
         }
     }
     if let Ok(ray) = camera.viewport_to_world(gt, cursor) {
-        if let Some(p) = pick::ray_ground(site, ray) {
-            opts.push(Opt::new("Walk here".into(), UiAct::Walk(tile_of(p.x, p.z))));
+        if let Some(p) = pick::ray_ground(g, ray) {
+            let t = tile_of(p.x, p.z);
+            // a click on cave rock walks to the nearest floor next to it
+            let t = match sc.cave.as_deref() {
+                Some(c) if !c.floor_at(t.x, t.y) => nearest_floor(c, t).unwrap_or(t),
+                _ => t,
+            };
+            opts.push(Opt::new("Walk here".into(), UiAct::Walk(t)));
         }
     }
     opts.extend(people);
@@ -962,17 +1351,39 @@ fn options_at(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, site: 
 }
 
 /// What a plain left click at `cursor` would do (clicktest).
-fn left_pick(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, site: &Site, pr: &pick::PickRects) -> pick::Picked {
+fn left_pick(sc: &Scape, cam: (&Camera, &GlobalTransform), cursor: Vec2, g: Gnd, pr: &pick::PickRects) -> pick::Picked {
     use pick::Picked;
-    match options_at(sc, cam, cursor, site, pr).first() {
+    match options_at(sc, cam, cursor, g, pr).first() {
         Some(Opt { target: Some(t), .. }) => Picked::T(*t),
         Some(Opt { act: UiAct::Walk(_), .. }) => Picked::Ground,
         _ => Picked::Nothing,
     }
 }
 
-fn ground_pick(site: &Site, ray: Ray3d) -> Option<Vec3> {
-    pick::ray_ground(site, ray)
+fn ground_pick(g: Gnd, ray: Ray3d) -> Option<Vec3> {
+    pick::ray_ground(g, ray)
+}
+
+/// Nearest cave floor tile to a wall tile (a click on the rock).
+fn nearest_floor(c: &cave::CaveMap, t: IVec2) -> Option<IVec2> {
+    for r in 1..=4 {
+        let mut best: Option<(f32, IVec2)> = None;
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let q = t + IVec2::new(dx, dz);
+                if c.floor_at(q.x, q.y) {
+                    let d = ((dx * dx + dz * dz) as f32).sqrt();
+                    if best.is_none_or(|b| d < b.0) {
+                        best = Some((d, q));
+                    }
+                }
+            }
+        }
+        if let Some((_, q)) = best {
+            return Some(q);
+        }
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1013,7 +1424,7 @@ fn world_input(
             }
         };
         if let Some(p) = at {
-            let opts = options_at(&sc, cam, p, &site, &pr);
+            let opts = options_at(&sc, cam, p, sc.gnd(&site), &pr);
             st.hover = opts.first().map(|o| o.label.clone()).unwrap_or_default();
             st.hover_target = opts.first().and_then(|o| o.target);
             st.ctx = Some(CtxMenu { at: p, opts });
@@ -1045,7 +1456,7 @@ fn world_input(
         }
         return;
     }
-    let opts = options_at(&sc, cam, cursor, &site, &pr);
+    let opts = options_at(&sc, cam, cursor, sc.gnd(&site), &pr);
     st.hover_target = opts.first().and_then(|o| o.target);
     let n = opts.len().saturating_sub(1);
     st.hover = match opts.first() {
@@ -1087,14 +1498,65 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
             }
             UiAct::Slot(i) => {
                 let Some(item) = sc.inv.get(i).cloned().flatten() else { continue };
-                let opts = ui::item_options(i, &item.item);
+                // with the locker or a trade open, a click puts the item in
+                let opts = if sc.trade.is_some() {
+                    ui::move_options(i, &item.item, "Offer")
+                } else if sc.bank.is_some() {
+                    ui::move_options(i, &item.item, "Deposit")
+                } else {
+                    ui::item_options(i, &item.item)
+                };
                 if m.alt {
                     st.ctx = Some(CtxMenu { at: st.cursor, opts });
                 } else if let Some(o) = opts.into_iter().next() {
                     st.ctx = None;
-                    if let UiAct::Item(s, v) = o.act {
-                        sc.item(s, v);
+                    match o.act {
+                        UiAct::Item(s, v) => sc.item(s, v),
+                        UiAct::Deposit(s, q) => sc.bank_deposit(s, q),
+                        UiAct::Offer(s, q) => sc.trade_offer(s, q),
+                        _ => {}
                     }
+                }
+            }
+            UiAct::Talk(id) => sc.talk(id),
+            UiAct::TradeWith(id) => sc.trade_with(id),
+            UiAct::Choose(o) => sc.choose(&o),
+            UiAct::Deposit(s, q) => sc.bank_deposit(s, q),
+            UiAct::Withdraw(i, q) => {
+                if m.alt {
+                    if let Some(it) = sc.bank.as_ref().and_then(|b| b.get(i)).cloned() {
+                        st.ctx = Some(CtxMenu { at: st.cursor, opts: ui::withdraw_options(i, &it.item) });
+                    }
+                } else {
+                    sc.bank_withdraw(i, q);
+                }
+            }
+            UiAct::CloseBank => {
+                sc.bank = None;
+                sc.dirty = true;
+            }
+            UiAct::Offer(s, q) => sc.trade_offer(s, q),
+            UiAct::Unoffer(i) => sc.trade_remove(i),
+            UiAct::TradeAccept => sc.trade_accept(),
+            UiAct::TradeDecline => sc.trade_decline(),
+            UiAct::TradeReq(yes) => {
+                if let Some((id, _)) = sc.trade_req.take() {
+                    if yes {
+                        sc.send(C2S::TradeRequest { id });
+                    }
+                }
+                sc.dirty = true;
+            }
+            UiAct::Rub(k) => sc.rub(k),
+            UiAct::CloseLamp => {
+                sc.lamp = None;
+                sc.dirty = true;
+            }
+            UiAct::UnequipGear(g) => {
+                if g == "weapon" {
+                    sc.unequip();
+                } else {
+                    sc.unequip_gear(g);
                 }
             }
             UiAct::Item(s, v) => sc.item(s, v),
@@ -1112,12 +1574,19 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
                     o.yaw = 0.0;
                 }
             }
-            UiAct::Unequip => sc.unequip(),
         }
     }
-    // walked away from the fabricator: close its panel
+    // walked away from the fabricator / locker: close its panel
     if st.fab_open && sc.fab_near().is_none() && sc.me.is_some() {
         st.fab_open = false;
+        sc.dirty = true;
+    }
+    if sc.bank.is_some() && sc.near_kind("locker").is_none() && sc.me.is_some() {
+        sc.bank = None;
+        sc.dirty = true;
+    }
+    if sc.lamp.is_some_and(|i| sc.inv.get(i).cloned().flatten().is_none_or(|s| s.item != "xp_lamp")) {
+        sc.lamp = None;
         sc.dirty = true;
     }
 }
@@ -1127,15 +1596,20 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
 fn move_actors(scape: Option<ResMut<Scape>>, site: Option<Res<Site>>, time: Res<Time>, mut focus: Option<ResMut<Focus>>, mut q: Query<(&mut Transform, &mut look::Rig)>) {
     let (Some(mut sc), Some(site)) = (scape, site) else { return };
     let dt = time.delta_secs().min(0.1);
-    let Scape { players, npcs, me, tick_s, .. } = &mut *sc;
+    let Scape { players, npcs, me, tick_s, cave, .. } = &mut *sc;
     let (tick, me) = (*tick_s, *me);
+    let g = match cave.as_deref() {
+        Some(c) => Gnd::Cave(c),
+        None => Gnd::Site(&site),
+    };
+    let underground = cave.is_some();
     for (id, a) in players.iter_mut().map(|(i, a)| (Some(*i), a)).chain(npcs.iter_mut().map(|(_, a)| (None, a))) {
         a.combat_t += dt;
         if a.t < 1.0 {
             a.t = (a.t + dt / tick).min(1.0);
         }
         let p = a.from.lerp(a.to, a.t);
-        let y = site.height(p.x, p.z).unwrap_or(p.y);
+        let y = g.floor(p.x, p.z).unwrap_or(p.y);
         a.pos = Vec3::new(p.x, y, p.z);
         let dir = match a.face {
             Some(f) => (f - a.pos).with_y(0.0),
@@ -1152,7 +1626,8 @@ fn move_actors(scape: Option<ResMut<Scape>>, site: Option<Res<Site>>, time: Res<
             t.rotation = Quat::from_rotation_y(a.yaw);
             rig.anim = a.anim;
         }
-        if id.is_some() && id == me {
+        // the terrain's detail window stays where the pit is while we're underground
+        if id.is_some() && id == me && !underground {
             if let Some(f) = focus.as_mut() {
                 f.0 = a.pos;
             }
@@ -1217,6 +1692,16 @@ fn animate(
                 look::Limb::Hover => {
                     t.translation.y = p.k + 0.18 * (rig.phase * 0.5).sin();
                 }
+                look::Limb::Seg(i) => {
+                    let amp = if matches!(rig.anim, anim::WALK | anim::RUN) { 0.24 } else { 0.08 };
+                    let k = i as f32;
+                    t.translation.x = amp * (rig.phase * 1.3 - k * 0.9).sin();
+                    t.translation.z = p.k;
+                    t.rotation = Quat::from_rotation_y(0.5 * amp * (rig.phase * 1.3 - k * 0.9).cos());
+                    if rig.anim == anim::ATTACK && i == 0 {
+                        t.translation.y = 0.33 + 0.25 * rig.recoil;
+                    }
+                }
                 l => {
                     let target = p.rest * look::pose(l, rig.anim, rig.phase + p.k, rig.recoil);
                     t.rotation = t.rotation.slerp(target, 1.0 - (-14.0 * dt).exp());
@@ -1233,13 +1718,18 @@ fn orbit_camera(
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time<Real>>,
     orbit: Option<ResMut<Orbit>>,
-    scape: Option<Res<Scape>>,
+    scape: Option<ResMut<Scape>>,
     site: Option<Res<Site>>,
     menu: Option<Res<Menu>>,
     st: Res<UiState>,
     mut cam: Query<&mut Transform, With<Camera3d>>,
 ) {
-    let (Some(mut o), Some(sc), Some(site), Ok(mut cam)) = (orbit, scape, site, cam.single_mut()) else { return };
+    let (Some(mut o), Some(mut sc), Some(site), Ok(mut cam)) = (orbit, scape, site, cam.single_mut()) else { return };
+    if std::mem::take(&mut sc.cam_reset) {
+        // a new place: look down into the tube, or the usual view up top
+        (o.pitch, o.dist) = if sc.cave.is_some() { (1.0, 13.0) } else { (0.62, 15.0) };
+        o.look = None;
+    }
     let dt = time.delta_secs().min(0.1);
     let free = menu.is_none_or(|m| !m.open) && st.typing.is_none() && st.name_entry.is_none();
     if free {
@@ -1258,7 +1748,13 @@ fn orbit_camera(
             o.dist = (o.dist * 0.88f32.powf(notches)).clamp(4.0, 60.0);
         }
     }
-    o.pitch = o.pitch.clamp(0.22, 1.4);
+    let underground = sc.cave.clone();
+    // in the tube: from above, over the walls (low angles would put the camera in the rock)
+    if underground.is_some() {
+        o.pitch = o.pitch.clamp(0.8, 1.45);
+        o.dist = o.dist.clamp(5.0, 28.0);
+    }
+    o.pitch = o.pitch.clamp(0.22, 1.45);
     let Some(me) = sc.my_pos() else { return };
     let want = me + Vec3::Y * 1.2;
     let look = match o.look {
@@ -1268,6 +1764,25 @@ fn orbit_camera(
     o.look = Some(look);
     let dir = Vec3::new(o.yaw.sin() * o.pitch.cos(), o.pitch.sin(), o.yaw.cos() * o.pitch.cos());
     let mut p = look + dir * o.dist;
+    if let Some(cv) = underground {
+        // never inside the rock: rise until the camera and the line to you clear it
+        let blocked = |p: Vec3| {
+            (0..=20).any(|i| {
+                let q = look.lerp(p, i as f32 / 20.0);
+                i > 1 && cv.solid_h(q.x, q.z) > q.y - 0.35
+            })
+        };
+        for _ in 0..24 {
+            if p.y < cv.solid_h(p.x, p.z) + 1.5 || blocked(p) {
+                p.y += 0.75;
+            } else {
+                break;
+            }
+        }
+        cam.translation = p;
+        cam.look_at(look, Vec3::Y);
+        return;
+    }
     // stay above the ground and keep the character in sight
     for _ in 0..12 {
         let ground = site.height(p.x, p.z).unwrap_or(f32::MIN);
@@ -1512,6 +2027,7 @@ fn script(
             st.tab = match arg.as_str() {
                 "skills" => 1,
                 "gear" => 2,
+                "quests" => 3,
                 _ => 0,
             };
             sc.dirty = true;
@@ -1561,11 +2077,16 @@ fn script(
             let mp = sc.my_pos().unwrap_or_default();
             let kind_of = |t: pick::Target| match t {
                 pick::Target::Npc(id) => sc.npcs.get(&id).map(|a| a.kind.clone()),
-                pick::Target::Player(id) => sc.players.get(&id).map(|a| if a.role.is_some() { "colonist".into() } else { "player".into() }),
+                pick::Target::Player(id) => sc.players.get(&id).map(|a| match &a.role {
+                    // "colonist" for any of them, or the role ("guard", "medic", ...)
+                    Some(r) if arg == *r => r.clone(),
+                    Some(_) => "colonist".into(),
+                    None => "player".into(),
+                }),
                 pick::Target::Node(id) => sc.nodes.get(&id).map(|n| n.kind.clone()),
             };
             let visible = |s: &&pick::Shown| match (site.as_ref(), cam.single()) {
-                (Some(site), Ok((c, g))) => !s.hidden(c, g, site),
+                (Some(site), Ok((c, g))) => !s.hidden(c, g, sc.gnd(site)),
                 _ => true,
             };
             let best = pr.shown.iter().filter(|s| kind_of(s.target).as_deref() == Some(arg.as_str())).filter(visible).min_by(|a, b| a.base.distance_squared(mp).total_cmp(&b.base.distance_squared(mp)));
@@ -1591,12 +2112,87 @@ fn script(
             }
             match (best, site.as_ref(), cam.single()) {
                 (Some(s), Some(site), Ok(cam)) => {
-                    let opts = options_at(&sc, cam, s.centre(), site, &pr);
+                    let opts = options_at(&sc, cam, s.centre(), sc.gnd(site), &pr);
                     let o = opts.into_iter().next().expect("Cancel is always there");
                     info!("mmo-script: click {arg} at {:?} -> {} (wanted {:?}, got {:?})", s.centre(), o.label, s.target, o.target);
                     out.write(UiMsg { act: o.act, alt: false });
                 }
                 _ => warn!("mmo-script: no {arg} on screen to click"),
+            }
+        }
+        "talk" => {
+            // the nearest colonist (of a role, if given)
+            let id = sc.players.iter().filter(|(_, a)| a.role.as_ref().is_some_and(|r| arg.is_empty() || *r == arg)).min_by_key(|(_, a)| chebyshev((a.tile.x, a.tile.y), (me.x, me.y))).map(|(i, _)| *i);
+            match id {
+                Some(id) => sc.talk(id),
+                None => warn!("mmo-script: no colonist {arg}"),
+            }
+        }
+        "choose" => {
+            // a dialog option by id, or by number (1 = first)
+            let opt = sc.dialog.as_ref().and_then(|d| match arg.parse::<usize>() {
+                Ok(n) => d.options.get(n.saturating_sub(1)).map(|o| o.id.clone()),
+                Err(_) => d.options.iter().find(|o| o.id == arg).map(|o| o.id.clone()),
+            });
+            match opt {
+                Some(o) => sc.choose(&o),
+                None => warn!("mmo-script: no dialog option {arg}"),
+            }
+        }
+        "bank" | "pit" | "ladder" | "locker" => {
+            let kind = if cmd == "bank" { "locker" } else { cmd.as_str() };
+            match nearest_node(&sc, kind) {
+                Some(id) => sc.act_node(id),
+                None => warn!("mmo-script: no {kind}"),
+            }
+        }
+        "deposit" | "withdraw" | "offer" => {
+            // SLOT[:all|N]
+            let (a, q) = arg.split_once(':').unwrap_or((arg.as_str(), "1"));
+            let i: usize = a.parse().unwrap_or(0);
+            let q = if q == "all" { Qty::All } else { Qty::N(q.parse().unwrap_or(1)) };
+            match cmd.as_str() {
+                "deposit" => sc.bank_deposit(i, q),
+                "withdraw" => sc.bank_withdraw(i, q),
+                _ => sc.trade_offer(i, q),
+            }
+        }
+        "closebank" => {
+            sc.bank = None;
+            sc.dirty = true;
+        }
+        "trade" => {
+            // ask the nearest other (human) player to trade
+            let id = sc.players.iter().filter(|(i, a)| a.role.is_none() && Some(**i) != sc.me).min_by_key(|(_, a)| chebyshev((a.tile.x, a.tile.y), (me.x, me.y))).map(|(i, _)| *i);
+            match id {
+                Some(id) => sc.trade_with(id),
+                None => warn!("mmo-script: nobody to trade with"),
+            }
+        }
+        "accept" => {
+            if sc.trade_req.is_some() && sc.trade.is_none() {
+                out.write(UiMsg { act: UiAct::TradeReq(true), alt: false });
+            } else {
+                sc.trade_accept();
+            }
+        }
+        "decline" => sc.trade_decline(),
+        "wear" => sc.item(arg.parse().unwrap_or(0), "wear"),
+        "unwear" => sc.unequip_gear(&arg),
+        "lamp" => sc.item(arg.parse().unwrap_or(0), "rub"),
+        "rub" => {
+            // SLOT:SKILL
+            if let Some((a, k)) = arg.split_once(':') {
+                sc.lamp = a.parse().ok();
+                if let Some(k) = Skill::parse(k) {
+                    sc.rub(k);
+                }
+            }
+        }
+        "surge" => {
+            // offline cheat: start a Rift Surge now ("now") or bring its boss ("boss")
+            if let Link::Offline(sim) = &mut sc.link {
+                sim.cheat_surge(&arg);
             }
         }
         "clicktest" => commands.insert_resource(pick::ClickTest(Some(if arg.is_empty() { format!("step{}", run.i - 1) } else { arg.clone() }))),
@@ -1633,6 +2229,10 @@ fn script(
                             inv.resize(INV_SLOTS, None);
                             sc.inv = inv;
                         }
+                        S2C::Quest { id, state, step, progress, qp, .. } => {
+                            sc.quests.insert(id, QuestSt { s: state, step, p: progress });
+                            sc.qp = qp;
+                        }
                         S2C::Xp { skill, xp, .. } => {
                             if let Some(s) = Skill::parse(&skill) {
                                 sc.skills.set(s, xp);
@@ -1651,6 +2251,19 @@ fn script(
         "log" => {
             let me_a = sc.me.and_then(|m| sc.players.get(&m));
             let alive = sc.npcs.values().filter(|a| a.anim != anim::DEAD).count();
+            info!(
+                "mmo-script: log2: room={} cave={} gear={:?} armour={} qp={} quests={:?} bank={:?} trade={:?} dialog={:?} surge={:?}",
+                sc.room,
+                sc.cave.is_some(),
+                sc.gear,
+                sc.armour,
+                sc.qp,
+                sc.quests.iter().map(|(k, v)| format!("{k}:{}:{}:{}", v.s, v.step, v.p)).collect::<Vec<_>>(),
+                sc.bank.as_ref().map(|b| b.iter().map(|s| format!("{}x{}", s.item, s.qty)).collect::<Vec<_>>()),
+                sc.trade.as_ref().map(|t| (t.stage, t.mine.len(), t.theirs.len(), t.me_ok, t.them_ok)),
+                sc.dialog.as_ref().map(|d| (d.name.clone(), d.options.iter().map(|o| o.id.clone()).collect::<Vec<_>>())),
+                sc.surge.as_ref().map(|v| (v.phase.clone(), v.at, v.ends_tick.saturating_sub(sc.tick_n)))
+            );
             info!(
                 "mmo-script: log: tick={} tile={:?} anim={} hp={}/{} weapon={:?} inv={} skills=[{}] players={} creatures_alive={}/{} nodes_up={}/{} status='{}'",
                 sc.tick_n,
@@ -1687,4 +2300,142 @@ fn script(
         }
         other => warn!("mmo-script: unknown step {other}"),
     }
+}
+
+// ------------------------------------------------------------------------------------ lava tube
+
+/// The headlamp that lights the tube around you.
+#[derive(Component)]
+pub struct Headlamp;
+
+/// What `cave_env` changed, to put back on the way out.
+#[derive(Default)]
+pub struct EnvSaved {
+    vis: Vec<(Entity, Visibility)>,
+    sun: Vec<(Entity, f32)>,
+    fog: Vec<(Entity, DistanceFog)>,
+    ambient: Option<GlobalAmbientLight>,
+    clear: Color,
+    lamp: Option<Entity>,
+}
+
+/// Underground: hide the terrain and sky, put out the sun, darken the air, light a headlamp.
+/// Everything comes back when you climb out (or leave the mode).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn cave_env(
+    mut commands: Commands,
+    scape: Option<Res<Scape>>,
+    render: Option<Res<crate::terrain::TerrainRender>>,
+    sky: Query<Entity, With<crate::visuals::SkyDome>>,
+    mut vis: Query<&mut Visibility>,
+    mut sun: Query<(Entity, &mut DirectionalLight)>,
+    mut fog: Query<(Entity, &mut DistanceFog)>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    mut clear: ResMut<ClearColor>,
+    mut lamp: Query<&mut Transform, With<Headlamp>>,
+    mut saved: Local<Option<EnvSaved>>,
+) {
+    let want = scape.as_ref().is_some_and(|s| s.cave.is_some());
+    match (want, saved.is_some()) {
+        (true, false) => {
+            let mut sv = EnvSaved { clear: clear.0, ambient: Some(ambient.clone()), ..default() };
+            let hide: Vec<Entity> = render.as_ref().map(|r| r.coarse.values().copied().chain(r.fine.values().map(|f| f.0)).collect()).unwrap_or_default();
+            for e in hide.into_iter().chain(sky.iter()) {
+                if let Ok(mut v) = vis.get_mut(e) {
+                    sv.vis.push((e, *v));
+                    *v = Visibility::Hidden;
+                }
+            }
+            for (e, mut l) in &mut sun {
+                sv.sun.push((e, l.illuminance));
+                l.illuminance = 0.0;
+            }
+            for (e, mut f) in &mut fog {
+                sv.fog.push((e, f.clone()));
+                f.color = Color::srgb(0.0, 0.0, 0.0);
+                f.directional_light_color = Color::NONE;
+                f.falloff = FogFalloff::Linear { start: 20.0, end: 85.0 };
+            }
+            ambient.color = Color::srgb(0.45, 0.55, 0.85);
+            ambient.brightness = 170.0;
+            clear.0 = Color::BLACK;
+            // tuning: MM_LAMP="intensity,range"
+            let (int, range) = std::env::var("MM_LAMP").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))).unwrap_or((2_500_000.0f32, 45.0f32));
+            sv.lamp = Some(
+                commands
+                    .spawn((Headlamp, PointLight { color: Color::srgb(1.0, 0.92, 0.80), intensity: int, range, shadow_maps_enabled: false, ..default() }, Transform::default()))
+                    .id(),
+            );
+            *saved = Some(sv);
+        }
+        (false, true) => {
+            let sv = saved.take().unwrap();
+            for (e, v) in sv.vis {
+                if let Ok(mut x) = vis.get_mut(e) {
+                    *x = v;
+                }
+            }
+            for (e, i) in sv.sun {
+                if let Ok((_, mut l)) = sun.get_mut(e) {
+                    l.illuminance = i;
+                }
+            }
+            for (e, f) in sv.fog {
+                if let Ok((_, mut x)) = fog.get_mut(e) {
+                    *x = f;
+                }
+            }
+            if let Some(a) = sv.ambient {
+                *ambient = a;
+            }
+            clear.0 = sv.clear;
+            if let Some(l) = sv.lamp {
+                if let Ok(mut e) = commands.get_entity(l) {
+                    e.despawn();
+                }
+            }
+        }
+        _ => {}
+    }
+    // the lamp rides above your head
+    if let (Some(sc), Ok(mut t)) = (scape.as_ref(), lamp.single_mut()) {
+        if let Some(p) = sc.my_pos() {
+            // high above you: a wide, even pool rather than a hot spot at your feet
+            t.translation = p + Vec3::Y * std::env::var("MM_LAMP_H").ok().and_then(|v| v.parse().ok()).unwrap_or(6.5f32);
+        }
+    }
+}
+
+/// Dress my astronaut in the armour I wear (others' armour isn't sent).
+#[allow(clippy::too_many_arguments)]
+fn dress_me(
+    mut commands: Commands,
+    scape: Option<ResMut<Scape>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut kit: ResMut<Kit>,
+    kids: Query<&Children>,
+    parts: Query<&look::Part>,
+    pieces: Query<(), With<look::ArmourPiece>>,
+) {
+    let Some(mut sc) = scape else { return };
+    if !sc.gear_dirty {
+        return;
+    }
+    let Some(root) = sc.me.and_then(|m| sc.players.get(&m)).map(|a| a.e) else { return };
+    // wait until the model's parts exist
+    if kids.get(root).is_err() {
+        return;
+    }
+    let mut arm = None;
+    for d in kids.iter_descendants(root) {
+        if pieces.contains(d) {
+            commands.entity(d).despawn();
+        } else if parts.get(d).is_ok_and(|p| p.limb == look::Limb::ArmL) {
+            arm = Some(d);
+        }
+    }
+    let gear = sc.gear.clone();
+    look::dress(&mut Ctx { commands: &mut commands, meshes: &mut meshes, mats: &mut mats, kit: &mut kit }, root, arm, &gear);
+    sc.gear_dirty = false;
 }

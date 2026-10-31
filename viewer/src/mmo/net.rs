@@ -14,11 +14,16 @@ fn decode(text: &str) -> Option<S2C> {
     serde_json::from_str(text).ok()
 }
 
-/// `ws://host/` + `room/<site>`; accepts a base URL with or without a trailing slash or `/room`.
+/// `ws://host/` + `room/<site>` (or `<site>~cave`, the lava tube); accepts a base URL with or
+/// without a trailing slash or `/room`.
 pub fn room_url(base: &str, site: &str) -> String {
     let b = base.trim_end_matches('/');
     let b = b.strip_suffix("/room").unwrap_or(b);
-    format!("{b}/room/{}", super::proto::sanitize_site(site))
+    let (site, cave) = match site.strip_suffix("~cave") {
+        Some(s) => (s, "~cave"),
+        None => (site, ""),
+    };
+    format!("{b}/room/{}{cave}", super::proto::sanitize_site(site))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

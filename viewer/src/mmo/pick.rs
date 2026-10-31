@@ -5,6 +5,7 @@
 //! terrain are dropped. `clicktest` clicks (virtually) at the centre, inside and around each
 //! visible target and logs how often the left-click default picks the thing you clicked on.
 
+use super::cave::Gnd;
 use super::grid::tile_of;
 use super::{Scape, anim};
 use crate::terrain::Site;
@@ -42,8 +43,8 @@ impl Shown {
     }
     /// Behind a dune from here: the ground is hit well before the thing's middle. Only checked for
     /// what's near the cursor (a ray march per thing per frame would be too slow in the browser).
-    pub fn hidden(&self, camera: &Camera, cgt: &GlobalTransform, site: &Site) -> bool {
-        camera.viewport_to_world(cgt, self.centre()).is_ok_and(|ray| ray_ground_t(site, ray).is_some_and(|t| t < self.depth - self.reach - 1.0))
+    pub fn hidden(&self, camera: &Camera, cgt: &GlobalTransform, g: Gnd) -> bool {
+        camera.viewport_to_world(cgt, self.centre()).is_ok_and(|ray| ray_ground_t(g, ray).is_some_and(|t| t < self.depth - self.reach - 1.0))
     }
     pub fn contains(&self, p: Vec2, pad: f32) -> bool {
         p.x >= self.min.x - pad && p.y >= self.min.y - pad && p.x <= self.max.x + pad && p.y <= self.max.y + pad
@@ -77,11 +78,11 @@ fn local_box(root: Entity, kids: &Query<&Children>, parts: &Query<(&GlobalTransf
 }
 
 /// Ray-march to the ground: first crossing below the terrain, refined by bisection.
-pub fn ray_ground(site: &Site, ray: Ray3d) -> Option<Vec3> {
-    ray_ground_t(site, ray).map(|t| ray.get_point(t))
+pub fn ray_ground(g: Gnd, ray: Ray3d) -> Option<Vec3> {
+    ray_ground_t(g, ray).map(|t| ray.get_point(t))
 }
 
-pub fn ray_ground_t(site: &Site, ray: Ray3d) -> Option<f32> {
+pub fn ray_ground_t(g: Gnd, ray: Ray3d) -> Option<f32> {
     let mut t = 0.0f32;
     let mut prev = 0.0;
     loop {
@@ -91,12 +92,12 @@ pub fn ray_ground_t(site: &Site, ray: Ray3d) -> Option<f32> {
             return None;
         }
         let p = ray.get_point(t);
-        if site.height(p.x, p.z).is_some_and(|h| p.y <= h) {
+        if g.h(p.x, p.z).is_some_and(|h| p.y <= h) {
             let (mut a, mut b) = (prev, t);
             for _ in 0..14 {
                 let m = 0.5 * (a + b);
                 let q = ray.get_point(m);
-                if site.height(q.x, q.z).is_some_and(|h| q.y <= h) {
+                if g.h(q.x, q.z).is_some_and(|h| q.y <= h) {
                     b = m;
                 } else {
                     a = m;
@@ -189,11 +190,11 @@ pub fn rects(
 /// near it; then creatures beat astronauts beat rocks / stations (rifts last, they're mostly
 /// empty space); among equals the one in front wins. Small or far things get a few pixels of
 /// slack so they stay clickable.
-pub fn under(pr: &PickRects, sc: &Scape, p: Vec2, cam: (&Camera, &GlobalTransform), site: &Site) -> Vec<Target> {
+pub fn under(pr: &PickRects, sc: &Scape, p: Vec2, cam: (&Camera, &GlobalTransform), g: Gnd) -> Vec<Target> {
     let mut v: Vec<(bool, u8, f32, Target)> = Vec::new();
     for s in &pr.shown {
         let pad = (12.0 - s.size().max_element() * 0.2).clamp(2.0, 8.0);
-        if !s.contains(p, pad) || s.hidden(cam.0, cam.1, site) {
+        if !s.contains(p, pad) || s.hidden(cam.0, cam.1, g) {
             continue;
         }
         let inside = s.contains(p, 0.0);
@@ -271,6 +272,7 @@ fn class(sc: &Scape, t: Target) -> &'static str {
         Target::Node(id) => match sc.nodes.get(&id).map(|n| n.kind.as_str()) {
             Some("fabricator") => "fabricator",
             Some("rift") => "rift",
+            Some("locker" | "pit" | "ladder") => "station",
             _ => "rock",
         },
     }
@@ -304,16 +306,17 @@ pub fn click_test(
 ) {
     let Some(label) = req.0.take() else { return };
     let (Some(sc), Some(site), Ok((camera, cgt)), Ok(w)) = (scape, site, cam.single(), win.single()) else { return };
+    let g = sc.gnd(&site);
     let scale = w.scale_factor();
     let (ww, wh) = (w.width(), w.height());
     let panels: Vec<(ComputedNode, UiGlobalTransform)> = blockers.iter().filter(|b| b.2.get()).map(|b| (*b.0, *b.1)).collect();
     let usable = |p: Vec2| p.x > 2.0 && p.y > 2.0 && p.x < ww - 2.0 && p.y < wh - 2.0 && !panels.iter().any(|(n, t)| n.contains_point(*t, p * scale));
-    let pick = |p: Vec2| super::left_pick(&sc, (camera, cgt), p, &site, &pr);
+    let pick = |p: Vec2| super::left_pick(&sc, (camera, cgt), p, g, &pr);
     let mut by: HashMap<&'static str, [Tally; 4]> = HashMap::new(); // centre, inside, ±10 px, ±20 px
     let mut overlap: HashMap<String, u32> = HashMap::new();
     let (mut near_grab, mut near_walk, mut near_n) = (0u32, 0u32, 0u32);
     let mut sizes: HashMap<&'static str, Vec<f32>> = HashMap::new();
-    let shown: Vec<&Shown> = pr.shown.iter().filter(|s| !s.hidden(camera, cgt, &site)).collect();
+    let shown: Vec<&Shown> = pr.shown.iter().filter(|s| !s.hidden(camera, cgt, g)).collect();
     for s in shown.iter().copied() {
         let c = s.centre();
         if !usable(c) {
@@ -340,7 +343,7 @@ pub fn click_test(
             // astronauts aren't a left-click target (a click there walks up to them): they count
             // as hit when the right-click menu offers them
             let ok = match s.target {
-                Target::Player(_) => super::options_at(&sc, (camera, cgt), p, &site, &pr).iter().any(|o| o.target == Some(s.target)),
+                Target::Player(_) => super::options_at(&sc, (camera, cgt), p, g, &pr).iter().any(|o| o.target == Some(s.target)),
                 t => got == Picked::T(t),
             };
             by.entry(k).or_default()[slot].add(ok);
@@ -379,8 +382,8 @@ pub fn click_test(
                 continue;
             }
             let Ok(ray) = camera.viewport_to_world(cgt, p) else { continue };
-            let Some(g) = super::ground_pick(&site, ray) else { continue };
-            if let Ok(back) = camera.world_to_viewport(cgt, g) {
+            let Some(gp) = super::ground_pick(g, ray) else { continue };
+            if let Ok(back) = camera.world_to_viewport(cgt, gp) {
                 px_err.push(back.distance(p));
             }
             // reference: very fine march
@@ -388,8 +391,8 @@ pub fn click_test(
             while t < 1500.0 {
                 t += 0.02;
                 let q = ray.get_point(t);
-                if site.height(q.x, q.z).is_some_and(|h| q.y <= h) {
-                    if tile_of(q.x, q.z) != tile_of(g.x, g.z) {
+                if g.h(q.x, q.z).is_some_and(|h| q.y <= h) {
+                    if tile_of(q.x, q.z) != tile_of(gp.x, gp.z) {
                         tile_wrong += 1;
                     }
                     break;
