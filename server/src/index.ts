@@ -7,13 +7,13 @@ import { DurableObject } from "cloudflare:workers";
 import {
   TICK_MS, INV_SLOTS, MAX_XP, SKILLS, Skill, Slot, ITEMS, NODE_DEFS, RECIPES, Recipe, GATHER_TICKS, XP_TABLE,
   Bounds, WorldNode, levelForXp, gatherChance, generateNodes, clampBounds, clampToBounds, inBounds,
-  cleanName, cleanChat, GatherKind, HP_START_XP, WEAPONS, LEGACY_ITEMS, combatLevel, hitChance, maxHit, NPC_DEFS, NpcDef,
+  cleanName, cleanChat, GatherKind, HP_START_XP, WEAPONS, LEGACY_ITEMS, mergeStacks, combatLevel, hitChance, maxHit, NPC_DEFS, NpcDef,
   NPC_RESPAWN, AGGRO_RANGE, LEASH_RANGE, WANDER_RANGE, WorldNpc, NpcKind, generateRifts, placeExtras,
   ARMOUR, GEAR_SLOTS, Gear, GearSlot, emptyGear, gearBonus, playerDefRoll, creditDrop,
 } from "./game";
 import { BOT_WS, Colony } from "./bots";
 import { CaveMap, generateCave, isCaveSite, surfaceOf, floorAt, stepOpen } from "./cave";
-import { Bank, Trades, Trade } from "./bank";
+import { Bank, Trades, Trade, addTo } from "./bank";
 import { Shop, Buyback, SHOP_RANGE } from "./shop";
 import { QuestState, cleanQuests, questDefsPublic, questEvent, questPoints, talk, choose, rub } from "./quests";
 import { Surge } from "./events";
@@ -449,6 +449,7 @@ export class Room extends DurableObject<Env> {
       const item = s && typeof s.item === "string" ? LEGACY_ITEMS[s.item] ?? s.item : "";
       return s && ITEMS[item] && s.qty > 0 ? { item, qty: Math.floor(s.qty) } : null;
     });
+    mergeStacks(inv); // saves from before stacking kept one item per slot
     const gear = emptyGear();
     if (d?.gear && typeof d.gear === "object") {
       for (const slot of GEAR_SLOTS) { const it = d.gear[slot]; if (typeof it === "string" && ARMOUR[it]?.slot === slot) gear[slot] = it; }
@@ -769,8 +770,13 @@ export class Room extends DurableObject<Env> {
   onDrop(p: Player, msg: any) {
     if (this.busy(p)) return;
     const i = msg.slot;
-    if (!Number.isInteger(i) || i < 0 || i >= INV_SLOTS || !p.inv[i]) return this.send(p.ws, { t: "err", text: "Nothing in that slot." });
-    p.inv[i] = null;
+    const s = Number.isInteger(i) && i >= 0 && i < INV_SLOTS ? p.inv[i] : null;
+    if (!s) return this.send(p.ws, { t: "err", text: "Nothing in that slot." });
+    // qty: a count or "all"; without it the whole slot goes (the original message form)
+    const q = msg.qty === undefined || msg.qty === "all" ? s.qty : Number.isInteger(msg.qty) && msg.qty > 0 ? Math.min(msg.qty, s.qty) : 0;
+    if (!q) return this.send(p.ws, { t: "err", text: "Bad amount." });
+    s.qty -= q;
+    if (s.qty <= 0) p.inv[i] = null;
     p.dirty = true;
     this.send(p.ws, { t: "inv", inv: p.inv });
   }
@@ -817,6 +823,14 @@ export class Room extends DurableObject<Env> {
     if (Array.isArray(msg.give)) {
       for (const it of msg.give.slice(0, 28)) if (ITEMS[it]) this.addItem(p, it);
       p.dirty = true;
+      this.send(p.ws, { t: "inv", inv: p.inv });
+    }
+    if (Array.isArray(msg.rawinv)) { // an exact pack, unmerged: stands in for a save from before stacking
+      p.inv = Array.from({ length: INV_SLOTS }, (_, i) => {
+        const s = msg.rawinv[i];
+        return s && ITEMS[s.item] && Number.isInteger(s.qty) && s.qty > 0 ? { item: s.item, qty: s.qty } : null;
+      });
+      this.savePlayer(p);
       this.send(p.ws, { t: "inv", inv: p.inv });
     }
     if (Number.isInteger(msg.credits) && msg.credits > 0) {
@@ -902,7 +916,7 @@ export class Room extends DurableObject<Env> {
     const s = Number.isInteger(i) && i >= 0 && i < INV_SLOTS ? p.inv[i] : null;
     if (!s || s.item !== "medkit") return this.send(p.ws, { t: "err", text: "You can't use that." });
     if (this.tickN < p.nextEat) return;
-    p.inv[i] = null;
+    if (--s.qty <= 0) p.inv[i] = null;
     p.nextEat = this.tickN + 2;
     p.nextAttack = Math.max(p.nextAttack, this.tickN + 2); // patching up costs you a shot
     const max = hpLevel(p);
@@ -1071,6 +1085,14 @@ export class Room extends DurableObject<Env> {
     return Object.entries(r.inputs).every(([item, n]) => this.countItem(p, item) >= n);
   }
 
+  /** Run `fn` on p's inventory; if it returns false, put the inventory back exactly as it was. */
+  withInv(p: Player, fn: () => boolean): boolean {
+    const before = p.inv.map((s) => (s ? { ...s } : null));
+    if (fn()) return true;
+    p.inv.splice(0, p.inv.length, ...before);
+    return false;
+  }
+
   countItem(p: Player, item: string): number {
     return p.inv.reduce((a, s) => a + (s && s.item === item ? s.qty : 0), 0);
   }
@@ -1088,12 +1110,7 @@ export class Room extends DurableObject<Env> {
 
   /** Add `n` of an item (n > 1 only makes sense for stackables). */
   addItems(p: Player, item: string, n: number): boolean {
-    if (n <= 0) return true;
-    if (!this.addItem(p, item)) return false;
-    const s = p.inv.find((s) => s && s.item === item);
-    if (s && ITEMS[item]?.stack) s.qty += n - 1;
-    else for (let i = 1; i < n; i++) this.addItem(p, item);
-    return true;
+    return addTo(p.inv, item, n); // all or nothing
   }
 
   addItem(p: Player, item: string): boolean {
@@ -1298,8 +1315,15 @@ export class Room extends DurableObject<Env> {
     if (--a.timer > 0) return ANIM.craft;
     const r = a.recipe;
     if (!this.hasInputs(p, r) || p.trade) { p.action = null; return ANIM.idle; }
-    for (const [item, n] of Object.entries(r.inputs)) this.removeItem(p, item, n);
-    this.addItem(p, r.output); // inputs freed at least one slot
+    const ok = this.withInv(p, () => {
+      for (const [item, n] of Object.entries(r.inputs)) this.removeItem(p, item, n);
+      return this.addItem(p, r.output); // a part-used stack frees no slot, so this can fail
+    });
+    if (!ok) {
+      p.action = null;
+      this.send(p.ws, { t: "msg", text: "You don't have room in your pack for that." });
+      return ANIM.idle;
+    }
     p.dirty = true;
     this.send(p.ws, { t: "inv", inv: p.inv });
     this.send(p.ws, { t: "msg", text: r.text });

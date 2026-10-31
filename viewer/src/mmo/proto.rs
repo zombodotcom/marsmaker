@@ -21,7 +21,12 @@ pub enum C2S {
     /// gather, or use a locker / pit / ladder
     Act { node: u32 },
     Craft { recipe: String },
-    Drop { slot: usize },
+    /// `qty`: how many off the stack (a number or "all"); without it the whole slot goes
+    Drop {
+        slot: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        qty: Option<Qty>,
+    },
     Chat { msg: String },
     /// wield a weapon or wear armour (it goes to the item's gear slot)
     Equip { slot: usize },
@@ -889,9 +894,30 @@ pub fn recipe(id: &str) -> Option<&'static Recipe> {
 /// Crafting needs a fabricator within this many tiles (Chebyshev).
 pub const FAB_RANGE: i32 = 1;
 
-/// Items that stack in one slot.
-pub fn stacks(item: &str) -> bool {
-    matches!(item, "void_crystal" | "credits")
+/// Equippable gear (weapons and armour) stays one per slot; every other item stacks in one slot.
+/// The server's `GEAR_ITEMS` in server/src/game.ts must list the same ids (checked by a test).
+pub const GEAR_ITEMS: &[&str] = &[
+    "pistol", "rifle", "plasma_gun", "rift_blade", "chitin_helmet", "chitin_suit", "iron_helmet", "iron_suit", "void_shield", "relic_helmet", "relic_suit", "void_cape",
+];
+
+/// The one stacking rule (as the server's `stackable`).
+pub fn stackable(item: &str) -> bool {
+    !GEAR_ITEMS.contains(&item)
+}
+
+/// Merge duplicate stacks of a stackable item into its first slot, in place.
+pub fn merge_stacks(inv: &mut [Option<Slot>]) {
+    for i in 0..inv.len() {
+        let Some(item) = inv[i].as_ref().filter(|s| stackable(&s.item)).map(|s| s.item.clone()) else { continue };
+        for j in i + 1..inv.len() {
+            if inv[j].as_ref().is_some_and(|s| s.item == item) {
+                let q = inv[j].take().map_or(0, |s| s.qty);
+                if let Some(s) = inv[i].as_mut() {
+                    s.qty += q;
+                }
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------------ trader
@@ -1087,6 +1113,44 @@ pub fn sanitize_site(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stacking_rule_matches_the_server() {
+        // the server's list, read straight from its source
+        let src = include_str!("../../../server/src/game.ts");
+        let a = src.find("GEAR_ITEMS = new Set([").expect("GEAR_ITEMS in game.ts") + "GEAR_ITEMS = new Set([".len();
+        let b = a + src[a..].find("])").unwrap();
+        let mut server: Vec<&str> = src[a..b].split(',').map(|s| s.trim().trim_matches('"')).filter(|s| !s.is_empty()).collect();
+        let mut ours = GEAR_ITEMS.to_vec();
+        server.sort();
+        ours.sort();
+        assert_eq!(server, ours);
+        // every weapon and armour piece is gear; materials, consumables and credits stack
+        for w in ["pistol", "rifle", "plasma_gun", "rift_blade"] {
+            assert!(!stackable(w), "{w}");
+        }
+        for a in ["chitin_helmet", "iron_suit", "void_shield", "relic_suit", "void_cape"] {
+            assert!(armour(a).is_some() && !stackable(a), "{a}");
+        }
+        for s in ["regolith", "chitin", "void_crystal", "credits", "medkit", "xp_lamp", "ancient_relic", "drill_bit"] {
+            assert!(stackable(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn old_packs_merge() {
+        let sl = |i: &str, q: u32| Some(Slot { item: i.into(), qty: q });
+        let mut inv = vec![sl("chitin", 1), sl("pistol", 1), sl("chitin", 2), None, sl("pistol", 1), sl("credits", 5), sl("credits", 7)];
+        merge_stacks(&mut inv);
+        assert_eq!(inv, vec![sl("chitin", 3), sl("pistol", 1), None, None, sl("pistol", 1), sl("credits", 12), None]);
+    }
+
+    #[test]
+    fn drop_message() {
+        assert_eq!(serde_json::to_string(&C2S::Drop { slot: 3, qty: None }).unwrap(), r#"{"t":"drop","slot":3}"#);
+        assert_eq!(serde_json::to_string(&C2S::Drop { slot: 3, qty: Some(Qty::N(5)) }).unwrap(), r#"{"t":"drop","slot":3,"qty":5}"#);
+        assert_eq!(serde_json::to_string(&C2S::Drop { slot: 3, qty: Some(Qty::All) }).unwrap(), r#"{"t":"drop","slot":3,"qty":"all"}"#);
+    }
 
     #[test]
     fn xp_curve() {

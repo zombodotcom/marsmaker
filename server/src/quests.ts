@@ -3,7 +3,7 @@
 
 import type { Player, Room } from "./index";
 import type { Role } from "./bots";
-import { ITEMS, SKILLS, Skill, lampXp, levelForXp } from "./game";
+import { SKILLS, Skill, lampXp, levelForXp } from "./game";
 
 export type StepKind = "kill" | "gather" | "craft" | "deliver" | "enter";
 export interface QuestStep { kind: StepKind; target: string; n: number; text: string }
@@ -221,22 +221,15 @@ export function choose(room: Room, p: Player, option: string) {
   }
   if (option === "turn_in") {
     if (!ready(room, p, q)) return room.send(p.ws, { t: "msg", text: "You don't have everything yet." });
-    const items: string[] = [];
-    const stacks: [string, number][] = [];
-    for (const [item, n] of q.reward.items) {
-      if (ITEMS[item]?.stack) stacks.push([item, n]);
-      else for (let i = 0; i < n; i++) items.push(item);
-    }
-    for (let i = 0; i < q.reward.lamps; i++) items.push("xp_lamp");
     const step = q.steps[q.steps.length - 1];
-    const freed = step.kind === "deliver" && !ITEMS[step.target]?.stack ? step.n : 0;
-    const need = items.length + stacks.filter(([i]) => !room.countItem(p, i)).length;
-    if (p.inv.filter((s) => s === null).length + freed < need) {
-      return room.send(p.ws, { t: "msg", text: "Make some room in your pack first." });
-    }
-    if (step.kind === "deliver") room.removeItem(p, step.target, step.n);
-    for (const i of items) room.addItem(p, i);
-    for (const [i, n] of stacks) room.addItems(p, i, n);
+    const rewards: [string, number][] = [...q.reward.items];
+    if (q.reward.lamps) rewards.push(["xp_lamp", q.reward.lamps]);
+    // all or nothing: hand in, then add every reward; any reward that won't fit rolls the pack back
+    const ok = room.withInv(p, () => {
+      if (step.kind === "deliver") room.removeItem(p, step.target, step.n);
+      return rewards.every(([i, n]) => room.addItems(p, i, n));
+    });
+    if (!ok) return room.send(p.ws, { t: "msg", text: "Make some room in your pack first." });
     p.quests[q.id] = { s: "done", step: q.steps.length - 1, p: step.n };
     p.dirty = true;
     room.send(p.ws, { t: "inv", inv: p.inv });
@@ -255,7 +248,7 @@ export function rub(room: Room, p: Player, msg: any) {
   if (!SKILLS.includes(msg.skill)) return room.send(p.ws, { t: "err", text: "Pick a skill." });
   const skill = msg.skill as Skill;
   const xp = lampXp(levelForXp(p.skills[skill]));
-  p.inv[i] = null;
+  if (--s.qty <= 0) p.inv[i] = null;
   p.dirty = true;
   room.send(p.ws, { t: "inv", inv: p.inv });
   room.send(p.ws, { t: "msg", text: `The lamp flares and memories that aren't yours flood in. (+${xp} ${skill} xp)` });

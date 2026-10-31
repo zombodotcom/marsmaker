@@ -266,7 +266,7 @@ async function main() {
   await sleep(1500); // let the run finish so the client's position is current
   if (!(await b.walkTo(a1.tx + 2, a1.tz, 0))) { await sleep(1000); await b.walkTo(a1.tx + 2, a1.tz, 0); }
   // inventory space check
-  await testHook(b, { give: Array(26).fill("regolith") });
+  await testHook(b, { give: Array(28).fill("pistol") }); // gear: one per slot, so the pack really fills
   await testHook(a1, { give: ["sample", "sample", "sample", "sample"] });
   await sleep(600); a1.send({ t: "trade_request", id: b.id }); await sleep(200); b.send({ t: "trade_request", id: a1.id });
   await a1.wait((m) => m.t === "trade", 3000);

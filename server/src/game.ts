@@ -65,34 +65,36 @@ export function gatherChance(level: number, req: number, drill: boolean): number
 }
 
 // ---- Items & recipes --------------------------------------------------------
-export const ITEMS: Record<string, { name: string; stack: boolean }> = {
-  regolith: { name: "Regolith", stack: false },
-  ice: { name: "Water ice", stack: false },
-  hematite: { name: "Hematite", stack: false },
-  sample: { name: "Core sample", stack: false },
-  brick: { name: "Regolith brick", stack: false },
-  water: { name: "Water flask", stack: false },
-  iron_plate: { name: "Iron plate", stack: false },
-  drill_bit: { name: "Drill bit", stack: false },
-  pistol: { name: "Blaster", stack: false },
-  rifle: { name: "Pulse Rifle", stack: false },
-  plasma_gun: { name: "Plasma Cannon", stack: false },
-  medkit: { name: "Medkit", stack: false },
-  void_crystal: { name: "Void Crystal", stack: true },
-  chitin: { name: "Xeno Chitin", stack: false },
-  ancient_relic: { name: "Ancient Relic", stack: false },
-  xp_lamp: { name: "Insight Lamp", stack: false },
-  chitin_helmet: { name: "Chitin Helmet", stack: false },
-  chitin_suit: { name: "Chitin Suit", stack: false },
-  iron_helmet: { name: "Iron Helmet", stack: false },
-  iron_suit: { name: "Iron Suit", stack: false },
-  void_shield: { name: "Void Shield", stack: false },
-  relic_helmet: { name: "Relic Helm", stack: false },
-  relic_suit: { name: "Relic Armour", stack: false },
-  rift_blade: { name: "Rift Blade", stack: false },
-  void_cape: { name: "Void Cape", stack: false },
-  credits: { name: "Credits", stack: true },
+/** Equippable gear (weapons and armour) stays one per slot; every other item stacks in a single slot. */
+export const GEAR_ITEMS = new Set([
+  "pistol", "rifle", "plasma_gun", "rift_blade",
+  "chitin_helmet", "chitin_suit", "iron_helmet", "iron_suit", "void_shield", "relic_helmet", "relic_suit", "void_cape",
+]);
+/** The one stacking rule (mirrored in viewer/src/mmo/proto.rs `stackable`). */
+export const stackable = (item: string): boolean => !GEAR_ITEMS.has(item);
+
+const ITEM_NAMES: Record<string, string> = {
+  regolith: "Regolith", ice: "Water ice", hematite: "Hematite", sample: "Core sample", brick: "Regolith brick",
+  water: "Water flask", iron_plate: "Iron plate", drill_bit: "Drill bit", pistol: "Blaster", rifle: "Pulse Rifle",
+  plasma_gun: "Plasma Cannon", medkit: "Medkit", void_crystal: "Void Crystal", chitin: "Xeno Chitin",
+  ancient_relic: "Ancient Relic", xp_lamp: "Insight Lamp", chitin_helmet: "Chitin Helmet", chitin_suit: "Chitin Suit",
+  iron_helmet: "Iron Helmet", iron_suit: "Iron Suit", void_shield: "Void Shield", relic_helmet: "Relic Helm",
+  relic_suit: "Relic Armour", rift_blade: "Rift Blade", void_cape: "Void Cape", credits: "Credits",
 };
+export const ITEMS: Record<string, { name: string; stack: boolean }> = Object.fromEntries(
+  Object.entries(ITEM_NAMES).map(([id, name]) => [id, { name, stack: stackable(id) }]),
+);
+
+/** Merge duplicate stacks of a stackable item into its first slot (old saves held one item per slot). In place. */
+export function mergeStacks(inv: Slot[]): Slot[] {
+  const first = new Map<string, { item: string; qty: number }>();
+  inv.forEach((s, i) => {
+    if (!s || !stackable(s.item)) return;
+    const f = first.get(s.item);
+    if (f) { f.qty += s.qty; inv[i] = null; } else first.set(s.item, s);
+  });
+  return inv;
+}
 
 // ---- Trader prices ----------------------------------------------------------
 /**

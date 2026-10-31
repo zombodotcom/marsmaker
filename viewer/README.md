@@ -138,7 +138,7 @@ Steps for the newer features: `talk:ROLE`, `choose:ID|N`, `bank`, `deposit:SLOT[
 `withdraw:IDX`, `pit`, `ladder`, `wear:SLOT`, `unwear:helmet`, `lamp:SLOT`, `rub:SLOT:SKILL`,
 `trade` (ask the nearest player), `offer:SLOT`, `accept`, `decline`, `surge:now|boss` (offline),
 `shop`, `shopbuy:IDX[:N|all]`, `shopsell:SLOT[:N|all]`, `buyback:IDX`, `shoptab:0|1`, `closeshop`,
-`value:ITEM`, `buyctx:IDX` / `sellctx:SLOT` (their right-click menus), `give:ITEM*N` (offline),
+`value:ITEM`, `buyctx:IDX` / `sellctx:SLOT` / `itemctx:SLOT` (their right-click menus), `amount:drop:SLOT`, `give:ITEM*N` (offline),
 `tab:quests`, `log`. `tools/mmo_partner.mjs` is a scripted second player for trade tests.
 
 Clicking goes by what's drawn: each rock, creature and astronaut gets a screen rectangle from its

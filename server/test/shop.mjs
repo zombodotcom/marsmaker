@@ -323,13 +323,13 @@ async function main() {
     shop = await openShop(a);
     check(shop?.sell?.rift_blade === 0, "its sell price shows as 0");
 
-    // inventory full: can't buy an unstackable, nothing charged
+    // inventory full: can't buy gear (one per slot), nothing charged
     const free = a.inv.filter((s) => s === null).length;
-    await testHook(a, { give: Array(free).fill("regolith") });
+    await testHook(a, { give: [...Array(free - 1).fill("pistol"), ...Array(5).fill("regolith")] });
     await sleep(200);
     const crF = a.count("credits");
     await sleep(120);
-    a.send({ t: "shop_buy", idx: idxOf(shop, "medkit"), qty: 1 });
+    a.send({ t: "shop_buy", idx: idxOf(shop, "chitin_helmet"), qty: 1 });
     const full = await a.wait((m) => m.t === "msg" && /space/.test(m.text), 3000);
     check(!!full && a.count("credits") === crF, "a full pack refuses the purchase and charges nothing");
     shop = await shopDo(a, { t: "shop_sell", slot: a.slot("regolith"), qty: "all" });

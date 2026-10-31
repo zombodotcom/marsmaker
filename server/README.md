@@ -24,6 +24,7 @@ The wire protocol is in [PROTOCOL.md](PROTOCOL.md).
 - `test/community.mjs`: colonist test. Covers the greeting, the one-time starter kit, "help" escorts, the medic, scaling, and hibernation.
 - `test/features.mjs`: cave, bank, trading, quests, armour and Rift Surge test (needs `MARSSCAPE_TEST`).
 - `test/shop.mjs`: shop test: credits, buy / sell / buyback, the price curve, a randomised no-profit check, anti-dupe races (needs `MARSSCAPE_TEST`; `--live` runs the part that doesn't).
+- `test/stack.mjs`: inventory stacking: gathering, crafting from stacks (and a full pack), partial drops, eat / rub taking one, the locker, the shop, part-stack trades and the anti-dupe check, old saves merging on load (needs `MARSSCAPE_TEST`; `--live` runs the gathering and drop checks).
 - `test/load.mjs`: load test. Autonomous clients over several rooms, reporting tick jitter, message rates, errors, CPU and SQLite rows written.
 
 ## Colonists
@@ -79,6 +80,7 @@ node test/bots.mjs                  # in a second terminal; prints PASS/FAIL, ta
 node test/community.mjs             # colonists; about 1-2 minutes; the medic check needs MARSSCAPE_TEST
 node test/features.mjs              # cave, bank, trading, quests, armour, surge; 3-5 minutes; needs MARSSCAPE_TEST
 node test/shop.mjs                  # the trader's shop; about 2 minutes; needs MARSSCAPE_TEST
+node test/stack.mjs                 # inventory stacking; about 2 minutes; needs MARSSCAPE_TEST
 node test/load.mjs ws://127.0.0.1:8787 30 3 300   # 30 clients over 3 rooms for 5 minutes
 ```
 

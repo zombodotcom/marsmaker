@@ -394,7 +394,7 @@ impl Scape {
     pub fn item(&mut self, slot: usize, verb: &str) {
         let Some(item) = self.inv.get(slot).cloned().flatten() else { return };
         match verb {
-            "drop" => self.send(C2S::Drop { slot }),
+            "drop" => self.send(C2S::Drop { slot, qty: None }),
             "equip" | "wear" => self.send(C2S::Equip { slot }),
             "rub" => {
                 self.lamp = Some(slot);
@@ -1304,6 +1304,7 @@ fn keys(keys: Res<ButtonInput<KeyCode>>, mut kb: MessageReader<bevy::input::keyb
                             match f {
                                 ui::AmountFor::Buy(i) => sc.shop_buy(i, Qty::N(n)),
                                 ui::AmountFor::Sell(s) => sc.shop_sell(s, Qty::N(n)),
+                                ui::AmountFor::Drop(s) => sc.send(C2S::Drop { slot: s, qty: Some(Qty::N(n)) }),
                             }
                         }
                     }
@@ -1635,7 +1636,7 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
                 } else if sc.bank.is_some() {
                     ui::move_options(i, &item.item, "Deposit")
                 } else {
-                    ui::item_options(i, &item.item)
+                    ui::item_options(i, &item.item, item.qty)
                 };
                 if m.alt {
                     st.ctx = Some(CtxMenu { at: st.cursor, opts });
@@ -1717,6 +1718,7 @@ fn ui_actions(mut msgs: MessageReader<UiMsg>, scape: Option<ResMut<Scape>>, mut 
                 }
             }
             UiAct::Item(s, v) => sc.item(s, v),
+            UiAct::DropQty(s, q) => sc.send(C2S::Drop { slot: s, qty: Some(q) }),
             UiAct::Make(r) => sc.craft(r),
             UiAct::CloseFab => {
                 st.fab_open = false;
@@ -2351,13 +2353,14 @@ fn script(
         }
         "closeshop" => sc.shop_close(),
         "value" => sc.value(&arg),
-        "buyctx" | "sellctx" => {
-            // the right-click menu of a shelf entry / pack slot, at the cursor
-            let i: usize = arg.parse().unwrap_or(0);
-            let opts = if cmd == "buyctx" {
-                sc.shop.as_ref().and_then(|s| s.stock.get(i)).map(|it| ui::buy_options(i, &it.item))
-            } else {
-                sc.inv.get(i).cloned().flatten().map(|it| ui::sell_options(i, &it.item))
+        "buyctx" | "sellctx" | "itemctx" => {
+            // the right-click menu of a shelf entry / pack slot (shop or plain), at the cursor;
+            // a pack slot can also be named by the item in it (itemctx:chitin)
+            let i: usize = arg.parse().unwrap_or_else(|_| sc.inv.iter().position(|s| s.as_ref().is_some_and(|s| s.item == arg)).unwrap_or(0));
+            let opts = match cmd.as_str() {
+                "buyctx" => sc.shop.as_ref().and_then(|s| s.stock.get(i)).map(|it| ui::buy_options(i, &it.item)),
+                "sellctx" => sc.inv.get(i).cloned().flatten().map(|it| ui::sell_options(i, &it.item)),
+                _ => sc.inv.get(i).cloned().flatten().map(|it| ui::item_options(i, &it.item, it.qty)),
             };
             if let Some(opts) = opts {
                 let at = st.fake_cursor.unwrap_or(Vec2::new(640.0, 300.0));
@@ -2368,7 +2371,14 @@ fn script(
             // the "X" prompt: amount:sell:SLOT or amount:buy:IDX
             if let Some((k, i)) = arg.split_once(':') {
                 let i = i.parse().unwrap_or(0);
-                st.amount = Some((if k == "buy" { ui::AmountFor::Buy(i) } else { ui::AmountFor::Sell(i) }, "12".into()));
+                st.amount = Some((
+                    match k {
+                        "buy" => ui::AmountFor::Buy(i),
+                        "drop" => ui::AmountFor::Drop(i),
+                        _ => ui::AmountFor::Sell(i),
+                    },
+                    "12".into(),
+                ));
                 sc.chat_dirty = true;
             }
         }

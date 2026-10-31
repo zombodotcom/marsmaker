@@ -25,7 +25,7 @@ pub fn add_to(inv: &mut [Option<Slot>], item: &str, qty: u32) -> bool {
     if qty == 0 {
         return true;
     }
-    if stacks(item) {
+    if stackable(item) {
         if let Some(s) = inv.iter_mut().flatten().find(|s| s.item == item) {
             s.qty += qty;
             return true;
@@ -138,7 +138,7 @@ impl Shelf {
         if qty == 0 {
             return Err(format!("You can't afford that. ({} credits each)", buy_price(&item, have)));
         }
-        if !stacks(&item) {
+        if !stackable(&item) {
             let mut after = inv.clone();
             take_from(&mut after, "credits", self.cost_to_buy(&item, qty));
             qty = qty.min(after.iter().filter(|s| s.is_none()).count() as u32);
@@ -232,6 +232,22 @@ mod tests {
         let mut inv = vec![None; INV_SLOTS];
         inv[0] = Some(Slot { item: "credits".into(), qty: credits });
         inv
+    }
+
+    #[test]
+    fn full_pack_takes_more_of_a_stack_only() {
+        let mut inv: Vec<Option<Slot>> = (0..INV_SLOTS).map(|_| Some(Slot { item: "pistol".into(), qty: 1 })).collect();
+        inv[0] = Some(Slot { item: "chitin".into(), qty: 10 });
+        assert!(add_to(&mut inv, "chitin", 5));
+        assert_eq!(count(&inv, "chitin"), 15);
+        let before = inv.clone();
+        assert!(!add_to(&mut inv, "void_crystal", 1), "a new stack needs a free slot");
+        assert!(!add_to(&mut inv, "rifle", 1), "gear needs a free slot");
+        assert_eq!(inv, before, "a refusal changes nothing");
+        take_from(&mut inv, "chitin", 15);
+        assert!(inv[0].is_none(), "an emptied stack frees its slot");
+        assert!(add_to(&mut inv, "void_crystal", 40) && count(&inv, "void_crystal") == 40);
+        assert_eq!(inv.iter().filter(|s| s.as_ref().is_some_and(|s| s.item == "void_crystal")).count(), 1);
     }
 
     #[test]

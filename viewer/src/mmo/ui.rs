@@ -76,6 +76,8 @@ pub enum UiAct {
     Value(String),
     /// ask for an amount ("X") in the chat line
     Amount(AmountFor),
+    /// drop part of a stack (or all of it)
+    DropQty(usize, Qty),
 }
 
 /// What an "X" amount prompt will do with the number.
@@ -83,6 +85,27 @@ pub enum UiAct {
 pub enum AmountFor {
     Buy(usize),
     Sell(usize),
+    Drop(usize),
+}
+
+/// A stack count, classic style: yellow up to 99,999, then white "100K", then green "10M".
+pub fn stack_label(q: u32) -> (String, [f32; 3]) {
+    if q >= 10_000_000 {
+        (format!("{}M", q / 1_000_000), [0.35, 1.0, 0.45])
+    } else if q >= 100_000 {
+        (format!("{}K", q / 1_000), [1.0, 1.0, 1.0])
+    } else {
+        (q.to_string(), [1.0, 0.9, 0.2])
+    }
+}
+
+/// The count in a cell's top-left corner (stacks of 2+, and credits always).
+fn stack_count(b: &mut ChildSpawnerCommands, s: &Slot) {
+    if s.qty < 2 && s.item != "credits" {
+        return;
+    }
+    let (l, c) = stack_label(s.qty);
+    b.spawn((text(l, 11.0, rgb(c)), shadow(), Node { position_type: PositionType::Absolute, left: Val::Px(2.0), top: Val::Px(0.0), ..default() }));
 }
 
 #[derive(Message, Clone, Debug)]
@@ -392,7 +415,7 @@ fn short(item: &str) -> &str {
     }
 }
 
-pub fn item_options(slot: usize, item: &str) -> Vec<Opt> {
+pub fn item_options(slot: usize, item: &str, qty: u32) -> Vec<Opt> {
     let name = item_name(item);
     let mut v = Vec::new();
     if !weapon(Some(item)).item.is_empty() {
@@ -407,7 +430,16 @@ pub fn item_options(slot: usize, item: &str) -> Vec<Opt> {
     if item == "medkit" {
         v.push(Opt::new(format!("Eat {name}"), UiAct::Item(slot, "eat")));
     }
-    v.push(Opt::new(format!("Drop {name}"), UiAct::Item(slot, "drop")));
+    if qty > 1 {
+        v.push(Opt::new(format!("Drop-1 {name}"), UiAct::DropQty(slot, Qty::N(1))));
+        if qty > 5 {
+            v.push(Opt::new(format!("Drop-5 {name}"), UiAct::DropQty(slot, Qty::N(5))));
+        }
+        v.push(Opt::new(format!("Drop-X {name}"), UiAct::Amount(AmountFor::Drop(slot))));
+        v.push(Opt::new(format!("Drop-All {name}"), UiAct::DropQty(slot, Qty::All)));
+    } else {
+        v.push(Opt::new(format!("Drop {name}"), UiAct::Item(slot, "drop")));
+    }
     v.push(Opt::new(format!("Examine {name}"), UiAct::Item(slot, "examine")));
     v.push(Opt::new("Cancel".into(), UiAct::Cancel));
     v
@@ -476,8 +508,8 @@ fn side_pack(p: &mut ChildSpawnerCommands, sc: &Scape) {
                 let c = rgb(item_color(&s.item));
                 g.commands().entity(e).with_children(|b| {
                     b.spawn((Node { width: Val::Px(16.0), height: Val::Px(if shop { 5.0 } else { 12.0 }), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(c), BorderColor::all(Color::BLACK), Pickable::IGNORE));
-                    let l = if s.qty > 1 { format!("{} x{}", short(&s.item), s.qty) } else { short(&s.item).to_string() };
-                    b.spawn(text(l, if shop { 10.0 } else { 11.0 }, TEXT));
+                    b.spawn(text(short(&s.item), if shop { 10.0 } else { 11.0 }, TEXT));
+                    stack_count(b, s);
                     // with the shop open: what she'd pay for one
                     if let Some(shop) = &sc.shop {
                         match shop.sell.get(&s.item).copied().unwrap_or(0) {
@@ -606,8 +638,8 @@ fn item_grid(p: &mut ChildSpawnerCommands, items: &[Slot], cols: u16, act: impl 
             let c = rgb(item_color(&s.item));
             g.commands().entity(e).with_children(|b| {
                 b.spawn((Node { width: Val::Px(16.0), height: Val::Px(12.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BackgroundColor(c), BorderColor::all(Color::BLACK), Pickable::IGNORE));
-                let l = if s.qty > 1 { format!("{} x{}", short(&s.item), s.qty) } else { short(&s.item).to_string() };
-                b.spawn(text(l, 10.0, TEXT));
+                b.spawn(text(short(&s.item), 10.0, TEXT));
+                stack_count(b, s);
             });
         }
     });
@@ -1290,4 +1322,18 @@ pub fn minimap(scape: Option<ResMut<Scape>>, orbit: Option<Res<Orbit>>, handles:
         img.data = Some(px);
     }
     let _ = &mut sc;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stack_labels() {
+        assert_eq!(stack_label(5).0, "5");
+        assert_eq!(stack_label(99_999).0, "99999");
+        assert_eq!(stack_label(100_000), ("100K".to_string(), [1.0, 1.0, 1.0]));
+        assert_eq!(stack_label(9_999_999).0, "9999K");
+        assert_eq!(stack_label(12_345_678), ("12M".to_string(), [0.35, 1.0, 0.45]));
+    }
 }

@@ -162,7 +162,7 @@ fn role_line(role: &str, k: usize) -> &'static str {
     let lines: &[&str] = match role {
         "guard" => &["Rifts are quiet today. Too quiet.", "Need an escort? Say 'help' and I'll come running.", "Skitters first. Work up to the stalkers."],
         "medic" => &["Low on hitpoints? Come find me.", "Medkits: a water flask and a core sample, at the fabricator.", "Hitpoints come back slowly on their own. Medkits are faster."],
-        "quartermaster" => &["Bricks, plates, blasters - the fabricator does it all if you bring the stuff.", "Two iron plates make a blaster. Plates come from hematite.", "Void crystals stack. Everything else wants its own slot."],
+        "quartermaster" => &["Bricks, plates, blasters - the fabricator does it all if you bring the stuff.", "Two iron plates make a blaster. Plates come from hematite.", "Materials stack in one slot. Weapons and armour take a slot each."],
         "trader" => &["Credits for chitin, credits for crystals. I buy almost anything.", "Sold something by mistake? I'll sell it back at what I paid. For a while.", "Prices go up when the shelf runs low. Supply and demand, even out here."],
         "miner" => &["Ice opens up at Mining 15, hematite at 30. Keep swinging.", "A drill bit in your pack makes mining easier.", "Regolith's boring, but bricks don't make themselves."],
         _ => &["Outcrops give core samples. You'll want them for medkits and drill bits.", "The layers in these outcrops are older than any rift.", "Survey's quiet work. I like quiet."],
@@ -506,12 +506,23 @@ impl Sim {
                 let Some(r) = recipe(&r) else { return };
                 self.start_craft(ME, r);
             }
-            C2S::Drop { slot } => {
+            C2S::Drop { slot, qty } => {
                 let Some(p) = self.me() else { return };
-                if slot < INV_SLOTS && p.inv[slot].take().is_some() {
-                    let inv = p.inv.clone();
-                    self.out.push(S2C::Inv { inv });
+                let Some(s) = p.inv.get_mut(slot).and_then(|s| s.as_mut()) else { return };
+                // no qty: the whole slot (the original message)
+                let n = match qty {
+                    None | Some(Qty::All) => s.qty,
+                    Some(Qty::N(k)) => k.min(s.qty),
+                };
+                if n == 0 {
+                    return;
                 }
+                s.qty -= n;
+                if s.qty == 0 {
+                    p.inv[slot] = None;
+                }
+                let inv = p.inv.clone();
+                self.out.push(S2C::Inv { inv });
             }
             C2S::Chat { msg } => {
                 let msg: String = msg.chars().filter(|c| !c.is_control()).take(CHAT_MAX).collect();
@@ -549,7 +560,7 @@ impl Sim {
             C2S::Eat { slot } => {
                 let Some(p) = self.me() else { return };
                 if p.inv.get(slot).and_then(|s| s.as_ref()).is_some_and(|s| s.item == "medkit") {
-                    p.inv[slot] = None;
+                    take_one(&mut p.inv, slot);
                     let max = p.skills.level(Skill::Hitpoints) as i32;
                     p.hp = (p.hp + MEDKIT_HEAL).min(max);
                     p.cd += MEDKIT_DELAY;
@@ -701,13 +712,14 @@ impl Sim {
     pub fn cheat_give(&mut self, item: &str) -> Vec<S2C> {
         let (item, n) = item.split_once('*').map_or((item, 1), |(i, n)| (i, n.parse().unwrap_or(1)));
         if let Some(pi) = self.players.iter().position(|p| p.id == ME) {
-            if stacks(item) {
+            if stackable(item) {
                 shop::add_to(&mut self.players[pi].inv, item, n);
             } else {
                 for _ in 0..n {
                     self.give(pi, item);
                 }
             }
+            merge_stacks(&mut self.players[pi].inv);
             let inv = self.players[pi].inv.clone();
             return vec![S2C::Inv { inv }];
         }
@@ -751,7 +763,7 @@ impl Sim {
 
     fn give(&mut self, pi: usize, item: &str) -> bool {
         let p = &mut self.players[pi];
-        if stacks(item) {
+        if stackable(item) {
             if let Some(s) = p.inv.iter_mut().flatten().find(|s| s.item == item) {
                 s.qty += 1;
                 return true;
@@ -1041,23 +1053,19 @@ impl Sim {
                     p.task = Task::None;
                     return;
                 }
+                // inputs out, output in, all or nothing: a part-used stack frees no slot
+                let mut inv = p.inv.clone();
                 for (it, q) in r.inputs {
-                    let mut left = *q;
-                    for s in p.inv.iter_mut() {
-                        if left == 0 {
-                            break;
-                        }
-                        if let Some(x) = s.as_mut().filter(|x| x.item == *it) {
-                            let take = x.qty.min(left);
-                            x.qty -= take;
-                            left -= take;
-                            if x.qty == 0 {
-                                *s = None;
-                            }
-                        }
-                    }
+                    shop::take_from(&mut inv, it, *q);
                 }
-                self.give(pi, r.id);
+                if !shop::add_to(&mut inv, r.id, 1) {
+                    p.task = Task::None;
+                    if pid == ME {
+                        self.msg(pid, "You don't have room in your pack for that.");
+                    }
+                    return;
+                }
+                self.players[pi].inv = inv;
                 if pid == ME {
                     let inv = self.players[pi].inv.clone();
                     self.out.push(S2C::Inv { inv });
@@ -1612,13 +1620,10 @@ impl Sim {
             Qty::All => e.qty,
             Qty::N(k) => k.min(e.qty),
         };
-        let mut got = 0;
-        for _ in 0..want {
-            if !self.give(pi, &e.item) {
-                break;
-            }
-            got += 1;
-        }
+        // a stack comes out whole; gear one free slot at a time
+        let room = self.players[pi].inv.iter().filter(|s| s.is_none()).count() as u32;
+        let got = if stackable(&e.item) { want } else { want.min(room) };
+        let got = if shop::add_to(&mut self.players[pi].inv, &e.item, got) { got } else { 0 };
         if got == 0 {
             return self.msg(ME, "You don't have enough inventory space.");
         }
@@ -1638,7 +1643,7 @@ impl Sim {
         }
         let Some(k) = Skill::parse(skill) else { return };
         let xp = lamp_xp(self.players[pi].skills.level(k));
-        self.players[pi].inv[slot] = None;
+        take_one(&mut self.players[pi].inv, slot);
         let inv = self.players[pi].inv.clone();
         self.out.push(S2C::Inv { inv });
         self.msg(ME, format!("The lamp flares and memories that aren't yours flood in. (+{xp} {skill} xp)"));
@@ -1776,40 +1781,17 @@ impl Sim {
                     return self.out.push(S2C::Msg { text: "You don't have everything yet.".into() });
                 }
                 let Some(pi) = self.me_index() else { return };
-                let mut items: Vec<&str> = Vec::new();
-                for (it, n) in q.items {
-                    for _ in 0..*n {
-                        items.push(it);
-                    }
-                }
-                for _ in 0..q.lamps {
-                    items.push("xp_lamp");
-                }
                 let step = &q.steps[q.steps.len() - 1];
-                let freed = if step.kind == "deliver" && !stacks(step.target) { step.n as usize } else { 0 };
-                let need = items.iter().filter(|i| !stacks(i)).count() + usize::from(items.iter().any(|i| stacks(i)));
-                if self.players[pi].inv.iter().filter(|s| s.is_none()).count() + freed < need {
+                // hand in, then every reward; if any won't fit the pack is left exactly as it was
+                let mut inv = self.players[pi].inv.clone();
+                if step.kind == "deliver" {
+                    shop::take_from(&mut inv, step.target, step.n);
+                }
+                let fits = q.items.iter().all(|(it, n)| shop::add_to(&mut inv, it, *n)) && shop::add_to(&mut inv, "xp_lamp", q.lamps);
+                if !fits {
                     return self.out.push(S2C::Msg { text: "Make some room in your pack first.".into() });
                 }
-                if step.kind == "deliver" {
-                    let mut left = step.n;
-                    for s in self.players[pi].inv.iter_mut() {
-                        if left == 0 {
-                            break;
-                        }
-                        if let Some(x) = s.as_mut().filter(|x| x.item == step.target) {
-                            let take = x.qty.min(left);
-                            x.qty -= take;
-                            left -= take;
-                            if x.qty == 0 {
-                                *s = None;
-                            }
-                        }
-                    }
-                }
-                for it in items {
-                    self.give(pi, it);
-                }
+                self.players[pi].inv = inv;
                 self.quests.insert(q.id.into(), QuestSt { s: "done".into(), step: q.steps.len() as u32 - 1, p: step.n });
                 let inv = self.players[pi].inv.clone();
                 self.out.push(S2C::Inv { inv });
@@ -1986,3 +1968,14 @@ impl Sim {
         self.surge.next = self.n + 2000 + self.rand_i(0, 1000) as u64;
     }
 }
+
+/// Use one from the stack in `slot` (a medkit, a lamp).
+fn take_one(inv: &mut [Option<Slot>], slot: usize) {
+    if let Some(s) = inv.get_mut(slot).and_then(|s| s.as_mut()) {
+        s.qty = s.qty.saturating_sub(1);
+        if s.qty == 0 {
+            inv[slot] = None;
+        }
+    }
+}
+

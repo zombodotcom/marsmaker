@@ -67,7 +67,8 @@ every 4 ticks until the node depletes, the inventory is full, or you walk away.
 Use the fabricator (node id 0); stand within 1 tile. Keeps making more while materials last.
 
 ```json
-{"t":"drop","slot":n}        // 0..27, destroys the item (no ground items yet)
+{"t":"drop","slot":n}        // 0..27, destroys the whole slot (no ground items yet)
+{"t":"drop","slot":n,"qty":k|"all"}  // (extra) destroys k off the stack in that slot ("all" = the whole slot)
 {"t":"chat","msg":"..."}     // ≤80 chars after cleaning, 1 per second
 {"t":"ping"}                 // → {"t":"pong","n":tick}
 {"t":"attack","npc":id}      // fight a void creature (see Combat)
@@ -123,7 +124,7 @@ refused with `{"t":"err","text":"Slow down."}`.
  "bounds":[...],"spawn":[tx,tz],"tick":1234,             // (extra)
  "xp_table":[0,0,83,174,...],                            // (extra) index = level, xp needed
  "recipes":[{"id","level","xp","inputs":{"regolith":2},"output"}],  // (extra)
- "items":{"regolith":{"name":"Regolith","stack":false},...},        // (extra)
+ "items":{"regolith":{"name":"Regolith","stack":true},...},         // (extra) stack: see Items
  "weapons":{"none":{"level","speed","acc","str","range"},...},     // (extra)
  "armour":{"iron_suit":{"slot":"suit","level":25,"def":28},...},     // (extra) see Armour
  "quest_defs":[{"id","name","giver","qp","req":{"survey":40},"steps":[{"kind","target","n","text"}],"reward":"text"}],  // (extra)
@@ -251,7 +252,17 @@ Items: `regolith`, `ice`, `hematite`, `sample`, `brick`, `water`, `iron_plate`, 
 `void_crystal` (Void Crystal, stacks), and *(extra)* `ancient_relic` (Ancient Relic), `xp_lamp`
 (Insight Lamp), `chitin_helmet`, `chitin_suit`, `iron_helmet`, `iron_suit`, `void_shield`,
 `relic_helmet` (Relic Helm), `relic_suit` (Relic Armour), `rift_blade` (Rift Blade) and
-`void_cape` (Void Cape). Everything except void crystals takes one slot per item.
+`void_cape` (Void Cape).
+
+**Stacking** *(extra)*: every item stacks in a single inventory slot (`{"item","qty"}` with any
+`qty`) except equippable gear, which takes one slot per item: the weapons `pistol`, `rifle`,
+`plasma_gun`, `rift_blade` and the armour `chitin_helmet`, `chitin_suit`, `iron_helmet`, `iron_suit`,
+`void_shield`, `relic_helmet`, `relic_suit`, `void_cape` (`GEAR_ITEMS` in game.ts; the viewer's
+proto.rs mirrors it). Anything gained (gathering, crafting, loot, quest rewards, the shop, the
+locker, a trade) joins the existing stack, so a full pack still takes more of an item you already
+hold; only a new kind needs a free slot. Crafting takes inputs from stacks and is refused (nothing
+consumed) if its output wouldn't fit. `eat` and `rub` use one from the stack. Saves from before
+stacking (one item per slot) are merged into stacks when loaded.
 
 ## Combat
 
@@ -430,8 +441,8 @@ up to 100 different kinds. The bank is per character (token) and per site, and i
 
 - `bank_deposit` puts `qty` of the item in inventory slot `slot` into the bank, taking from every
   slot holding that item (`"all"` = all of them).
-- `bank_withdraw` takes `qty` of bank entry `idx` into the inventory. Unstackable items need one
-  free slot each, and you get as many as fit. When an entry reaches 0 it is removed and later
+- `bank_withdraw` takes `qty` of bank entry `idx` into the inventory. Stackable items arrive as one
+  stack; gear needs one free slot each, and you get as many as fit. When an entry reaches 0 it is removed and later
   indices shift down.
 - Both need you within 1 tile of the locker and answer with `inv` and the new `bank`.
 
