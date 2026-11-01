@@ -121,6 +121,18 @@ the void.
   crystals, maybe the Rift Blade or the Void Cape).
 - Creature looks are one table (`mmo/look.rs`, `ENEMY_LOOKS`) and their stats another
   (`mmo/proto.rs`, `CREATURES`).
+- **Characters** are one rigged, animated glTF space explorer: "Astronaut" by Quaternius, CC0,
+  in `assets/astronaut.glb` (see `assets/CREDITS.md`), embedded in the binary (`mmo/hero.rs`).
+  - **Outfits:** players wear white plates with their name colour on the trim. Colonists dress
+    for their job: grey and red for the guard, white and red for the medic, hi-vis yellow for
+    the miner, and so on.
+  - **Armour:** it tints the plates and helmet, adds a crest, pauldrons, a shield on the forearm
+    and a cape on the back.
+  - **Gear:** the blaster and pick are children of the right-hand bone.
+  - **Animation:** the clips cross-fade with the game state: idle (gun drawn or not), run
+    (playback rate matched to the tile speed), aim and shoot, a pick swing for mining, interact
+    for survey and crafting, a flinch when hit, and death. A dead player's body stays down for
+    2 s before showing up at the respawn.
 
 | Key | Action |
 | --- | --- |
@@ -135,7 +147,7 @@ the void.
 Test hook: `--mmo-name NAME --mmo-script "wait:2,walk:6,3,act:regolith@8,tab:skills,shot:a.png,quit"`
 (steps in `mmo/mod.rs`, `ScriptRun`). With `--mmo-name` the run never reads or stores a login token.
 Steps for the newer features: `talk:ROLE`, `choose:ID|N`, `bank`, `deposit:SLOT[:all]`,
-`withdraw:IDX`, `pit`, `ladder`, `wear:SLOT`, `unwear:helmet`, `lamp:SLOT`, `rub:SLOT:SKILL`,
+`withdraw:IDX`, `pit`, `ladder`, `wear:SLOT|ITEM`, `face:KIND|ROLE`, `turn:DEG`, `unwear:helmet`, `lamp:SLOT`, `rub:SLOT:SKILL`,
 `trade` (ask the nearest player), `offer:SLOT`, `accept`, `decline`, `surge:now|boss` (offline),
 `shop`, `shopbuy:IDX[:N|all]`, `shopsell:SLOT[:N|all]`, `buyback:IDX`, `shoptab:0|1`, `closeshop`,
 `value:ITEM`, `buyctx:IDX` / `sellctx:SLOT` / `itemctx:SLOT` (their right-click menus), `amount:drop:SLOT`, `give:ITEM*N` (offline),

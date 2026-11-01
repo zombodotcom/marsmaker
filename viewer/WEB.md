@@ -115,6 +115,15 @@ double-sided, meshes without UVs). Result on an RTX 2080 (Proctor, 38 tiles): li
 longest freeze 28 s -> 3 s, time to drive 32 s -> 7 s. Re-check `MM_LINKS=1` after a Bevy upgrade
 (and refresh the copied shadows.wesl from the new bevy_pbr).
 
+MarsScape's characters are a skinned glTF (`src/mmo/hero.rs`), which needs a skinned variant of
+the lit pipeline: one more program link, 1.8-3.5 s on the same machine. They don't cast shadows in
+the browser, because the skinned shadow pipeline was another 1.4 s. They stay hidden until their
+materials are set, so the file's own materials never queue a pipeline either.
+
+On the RTX 2080, Russell, `?mode=scape&mmo=offline`, the longest task was 2.3-4.4 s before and
+2.4-3.8 s after; total blocked time was 7.9-12.9 s before and 10.1-15.1 s after. The ranges are
+wide because GPU-driver shader caching varies from run to run.
+
 ## Live mode: any of the 1,262 HiRISE DTMs, streamed from NASA
 
 `?live=<site id>` loads a DTM and its orthoimage straight from the public astrogeo-ard bucket

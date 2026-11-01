@@ -1,7 +1,8 @@
 //! What's under the cursor in MARSSCAPE, and the `clicktest` hook that measures it.
 //!
 //! Every node / creature / astronaut gets a screen rectangle each frame: the bounds of its meshes
-//! (cached in the root's local space) projected at its render position. Targets hidden behind
+//! (cached in the root's local space; astronauts have a fixed `PickBox`) projected at its render
+//! position. Targets hidden behind
 //! terrain are dropped. `clicktest` clicks (virtually) at the centre, inside and around each
 //! visible target and logs how often the left-click default picks the thing you clicked on.
 
@@ -118,6 +119,7 @@ pub fn rects(
     kids: Query<&Children>,
     parts: Query<(&GlobalTransform, &Aabb)>,
     gts: Query<&GlobalTransform>,
+    fixed: Query<&super::look::PickBox>,
 ) {
     pr.shown.clear();
     let (Some(sc), Ok((camera, cgt))) = (scape, cam.single()) else { return };
@@ -148,7 +150,8 @@ pub fn rects(
         if gt.translation().distance_squared(eye) > 400.0 * 400.0 {
             continue;
         }
-        let cached = boxes.get(&e).filter(|b| b.2 == up).map(|b| (b.0, b.1));
+        // characters have a fixed box; their skinned meshes' bounds move with every pose
+        let cached = fixed.get(e).ok().map(|b| (b.0, b.1)).or_else(|| boxes.get(&e).filter(|b| b.2 == up).map(|b| (b.0, b.1)));
         let Some((lo, hi)) = cached.or_else(|| {
             let b = local_box(e, &kids, &parts, &gts)?;
             boxes.insert(e, (b.0, b.1, up));

@@ -17,6 +17,7 @@
 
 mod cave;
 mod grid;
+mod hero;
 mod look;
 mod net;
 mod pick;
@@ -66,6 +67,7 @@ pub struct MmoPlugin;
 
 impl Plugin for MmoPlugin {
     fn build(&self, app: &mut App) {
+        hero::register(app);
         app.init_resource::<Kit>()
             .init_resource::<UiState>()
             .init_resource::<pick::PickRects>()
@@ -91,6 +93,7 @@ impl Plugin for MmoPlugin {
                     move_actors,
                     dress_me,
                     animate,
+                    (hero::setup, hero::dress, hero::drive).chain(),
                     orbit_camera,
                     effects,
                     ui::refresh,
@@ -132,6 +135,9 @@ pub struct Actor {
     /// seconds since this actor was last in combat (health bar shows for a while)
     pub combat_t: f32,
     pub height: f32,
+    /// a player's death: seconds left lying where they fell before showing up at the respawn
+    dying: f32,
+    dead_at: Vec3,
 }
 
 pub struct NodeS {
@@ -864,9 +870,9 @@ fn spawn_actor(sc: &mut Scape, cx: &mut Ctx, id: u32, name: String, role: Option
         let d = creature_def(kind);
         (look::creature(cx, kind, pos), d.map_or(1, |d| d.level), look::enemy_look(kind).height)
     } else {
-        (look::astronaut(cx, &name, pos), 0, 2.0)
+        (look::astronaut(cx, &name, role.as_deref(), pos), 0, 2.1)
     };
-    let a = Actor { name, role, npc, kind: kind.into(), level, tile, from: pos, to: pos, t: 1.0, pos, anim: anim::IDLE, e, yaw: 0.0, face: None, hp, max, combat_t: 99.0, height };
+    let a = Actor { name, role, npc, kind: kind.into(), level, tile, from: pos, to: pos, t: 1.0, pos, anim: anim::IDLE, e, yaw: 0.0, face: None, hp, max, combat_t: 99.0, height, dying: 0.0, dead_at: pos };
     let old = if npc { sc.npcs.insert(id, a) } else { sc.players.insert(id, a) };
     if let Some(o) = old {
         cx.commands.entity(o.e).despawn();
@@ -1079,6 +1085,11 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
                 a.combat_t = 0.0;
                 if a.npc {
                     a.hp = (a.hp - dmg).max(0);
+                } else if dmg > 0 {
+                    // astronauts flinch
+                    if let Ok(mut ec) = cx.commands.get_entity(a.e) {
+                        ec.insert(Flinch);
+                    }
                 }
             }
             let mine = s == Who::P(sc.me.unwrap_or(u32::MAX));
@@ -1090,7 +1101,8 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
                 let ranged = !a.npc || a.kind == "leviathan";
                 if ranged {
                     let fwd = (dp - a.pos).with_y(0.0).normalize_or_zero();
-                    let from = a.pos + Vec3::Y * if a.npc { a.height * 0.6 } else { 1.35 } + fwd * 0.7;
+                    // astronauts: the muzzle of the blaster held out at arm's length
+                    let from = a.pos + Vec3::Y * if a.npc { a.height * 0.6 } else { 1.53 } + fwd * if a.npc { 0.7 } else { 1.0 };
                     let lord = a.npc;
                     shot = Some((from, dp, plasma || lord, lord));
                 }
@@ -1117,9 +1129,13 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
             let Some(w) = Who::parse(&who) else { return };
             if let Some(a) = actor_mut(sc, w) {
                 if a.npc {
-                    a.anim = anim::DEAD;
                     a.hp = 0;
+                } else {
+                    // the world respawns them at once; their body stays down here a moment
+                    a.dying = 2.2;
+                    a.dead_at = a.pos;
                 }
+                a.anim = anim::DEAD;
                 a.combat_t = 99.0;
             }
         }
@@ -1248,6 +1264,10 @@ fn apply(sc: &mut Scape, cx: &mut Ctx, m: S2C, st: &mut UiState, site: &Site) {
 #[derive(Component)]
 struct Recoil;
 
+/// Marker component: the rig just took damage (characters flinch).
+#[derive(Component)]
+struct Flinch;
+
 fn set_tile(sc: &mut Scape, w: Who, t: IVec2, an: u8, hp: Option<i32>) {
     let world = sc.grid.world(t);
     let Some(a) = actor_mut(sc, w) else { return };
@@ -1272,7 +1292,7 @@ fn set_tile(sc: &mut Scape, w: Who, t: IVec2, an: u8, hp: Option<i32>) {
         }
         a.face = None;
     }
-    if !(a.npc && a.anim == anim::DEAD && hp.is_some_and(|h| h <= 0)) {
+    if !(a.npc && a.anim == anim::DEAD && hp.is_some_and(|h| h <= 0)) && a.dying <= 0.0 {
         a.anim = an;
     }
     if !matches!(an, anim::ATTACK | anim::MINE | anim::SURVEY | anim::CRAFT) {
@@ -1781,6 +1801,15 @@ fn move_actors(scape: Option<ResMut<Scape>>, site: Option<Res<Site>>, time: Res<
         let p = a.from.lerp(a.to, a.t);
         let y = g.floor(p.x, p.z).unwrap_or(p.y);
         a.pos = Vec3::new(p.x, y, p.z);
+        let speed = if a.t < 1.0 { a.from.distance(a.to) / tick } else { 0.0 };
+        if a.dying > 0.0 {
+            // lying where they fell (the world has already moved them to the respawn)
+            a.dying -= dt;
+            a.pos = a.dead_at;
+            if a.dying <= 0.0 {
+                a.anim = anim::IDLE;
+            }
+        }
         let dir = match a.face {
             Some(f) => (f - a.pos).with_y(0.0),
             None => (a.to - a.from).with_y(0.0),
@@ -1795,6 +1824,7 @@ fn move_actors(scape: Option<ResMut<Scape>>, site: Option<Res<Site>>, time: Res<
             t.translation = a.pos;
             t.rotation = Quat::from_rotation_y(a.yaw);
             rig.anim = a.anim;
+            rig.speed = if a.dying > 0.0 { 0.0 } else { speed };
         }
         // the terrain's detail window stays where the pit is while we're underground
         if id.is_some() && id == me && !underground {
@@ -1808,7 +1838,7 @@ fn move_actors(scape: Option<ResMut<Scape>>, site: Option<Res<Site>>, time: Res<
 fn animate(
     mut commands: Commands,
     time: Res<Time>,
-    mut rigs: Query<(Entity, &mut look::Rig, &mut Transform, Option<&Recoil>), Without<look::Part>>,
+    mut rigs: Query<(Entity, &mut look::Rig, &mut Transform, Option<&Recoil>, Option<&Flinch>, Has<hero::Hero>), Without<look::Part>>,
     children: Query<&Children>,
     mut parts: Query<(&look::Part, &mut Transform, &mut Visibility), Without<look::Rig>>,
     scape: Option<Res<Scape>>,
@@ -1816,10 +1846,15 @@ fn animate(
     let dt = time.delta_secs().min(0.1);
     let me_weapon = scape.as_ref().map(|s| s.weapon.clone());
     let me_e = scape.as_ref().and_then(|s| s.me.and_then(|m| s.players.get(&m)).map(|a| a.e));
-    for (e, mut rig, mut rt, rec) in &mut rigs {
+    for (e, mut rig, mut rt, rec, flinch, hero) in &mut rigs {
         if rec.is_some() {
             rig.recoil = 1.0;
+            rig.shots += 1;
             commands.entity(e).remove::<Recoil>();
+        }
+        if flinch.is_some() {
+            rig.hits += 1;
+            commands.entity(e).remove::<Flinch>();
         }
         rig.recoil = (rig.recoil - dt * 5.0).max(0.0);
         let speed = match rig.anim {
@@ -1829,8 +1864,8 @@ fn animate(
             _ => 3.0,
         } / rig.scale.max(0.5).sqrt();
         rig.phase += dt * speed;
-        // death: topple and sink
-        if rig.anim == anim::DEAD {
+        // death: topple and sink (astronauts play their death clip instead)
+        if rig.anim == anim::DEAD && !hero {
             rig.dead_t += dt;
             let k = (rig.dead_t / 0.5).min(1.0);
             rt.rotation *= Quat::from_rotation_z(k * 1.45);
@@ -1839,17 +1874,18 @@ fn animate(
             rig.dead_t = 0.0;
         }
         let gun = rig.anim == anim::ATTACK || (Some(e) == me_e && me_weapon.as_ref().is_some_and(|w| w.is_some()));
+        rig.armed = gun && rig.anim != anim::DEAD;
         for d in children.iter_descendants(e) {
             let Ok((p, mut t, mut v)) = parts.get_mut(d) else { continue };
             match p.limb {
                 look::Limb::Tool => {
-                    let want = if matches!(rig.anim, anim::MINE | anim::SURVEY) { Visibility::Inherited } else { Visibility::Hidden };
+                    let want = if rig.anim == anim::MINE { Visibility::Inherited } else { Visibility::Hidden };
                     if *v != want {
                         *v = want;
                     }
                 }
                 look::Limb::Gun => {
-                    let want = if gun && !matches!(rig.anim, anim::MINE | anim::SURVEY) { Visibility::Inherited } else { Visibility::Hidden };
+                    let want = if rig.armed && !matches!(rig.anim, anim::MINE | anim::SURVEY | anim::CRAFT) { Visibility::Inherited } else { Visibility::Hidden };
                     if *v != want {
                         *v = want;
                     }
@@ -2160,11 +2196,13 @@ fn script(
             }
         }
         "face" => {
-            // turn the camera to look past you at the nearest node / creature of a kind
+            // turn the camera to look past you at the nearest node / creature of a kind, or colonist
+            // of a role
             let n = sc.nodes.values().filter(|n| n.kind == arg).map(|n| n.pos);
             let c = sc.npcs.values().filter(|a| a.kind == arg && a.anim != anim::DEAD).map(|a| a.pos);
+            let r = sc.players.values().filter(|a| a.role.as_deref() == Some(arg.as_str())).map(|a| a.pos);
             let mp = sc.my_pos().unwrap_or_default();
-            if let (Some(t), Some(o)) = (n.chain(c).min_by(|a, b| a.distance_squared(mp).total_cmp(&b.distance_squared(mp))), orbit.as_mut()) {
+            if let (Some(t), Some(o)) = (n.chain(c).chain(r).min_by(|a, b| a.distance_squared(mp).total_cmp(&b.distance_squared(mp))), orbit.as_mut()) {
                 let d = mp - t;
                 o.yaw = d.x.atan2(d.z) + 0.6; // a little to the side, so you don't hide it
             }
@@ -2398,7 +2436,11 @@ fn script(
             }
         }
         "decline" => sc.trade_decline(),
-        "wear" => sc.item(arg.parse().unwrap_or(0), "wear"),
+        "wear" => {
+            // a pack slot, or the item in it (wear:iron_helmet)
+            let i: usize = arg.parse().unwrap_or_else(|_| sc.inv.iter().position(|s| s.as_ref().is_some_and(|s| s.item == arg)).unwrap_or(0));
+            sc.item(i, "wear");
+        }
         "unwear" => sc.unequip_gear(&arg),
         "lamp" => sc.item(arg.parse().unwrap_or(0), "rub"),
         "rub" => {
@@ -2420,6 +2462,12 @@ fn script(
         "rotate" => {
             if let Some(o) = orbit.as_mut() {
                 o.yaw = arg.parse::<f32>().unwrap_or(0.0).to_radians();
+            }
+        }
+        "turn" => {
+            // turn the camera by DEG from where it is
+            if let Some(o) = orbit.as_mut() {
+                o.yaw += arg.parse::<f32>().unwrap_or(0.0).to_radians();
             }
         }
         "pitch" => {
@@ -2629,35 +2677,14 @@ fn cave_env(
 }
 
 /// Dress my astronaut in the armour I wear (others' armour isn't sent).
-#[allow(clippy::too_many_arguments)]
-fn dress_me(
-    mut commands: Commands,
-    scape: Option<ResMut<Scape>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
-    mut kit: ResMut<Kit>,
-    kids: Query<&Children>,
-    parts: Query<&look::Part>,
-    pieces: Query<(), With<look::ArmourPiece>>,
-) {
+fn dress_me(scape: Option<ResMut<Scape>>, mut heroes: Query<&mut hero::Hero>) {
     let Some(mut sc) = scape else { return };
     if !sc.gear_dirty {
         return;
     }
     let Some(root) = sc.me.and_then(|m| sc.players.get(&m)).map(|a| a.e) else { return };
-    // wait until the model's parts exist
-    if kids.get(root).is_err() {
-        return;
-    }
-    let mut arm = None;
-    for d in kids.iter_descendants(root) {
-        if pieces.contains(d) {
-            commands.entity(d).despawn();
-        } else if parts.get(d).is_ok_and(|p| p.limb == look::Limb::ArmL) {
-            arm = Some(d);
-        }
-    }
-    let gear = sc.gear.clone();
-    look::dress(&mut Ctx { commands: &mut commands, meshes: &mut meshes, mats: &mut mats, kit: &mut kit }, root, arm, &gear);
+    // wait until the character exists
+    let Ok(mut h) = heroes.get_mut(root) else { return };
+    h.wear(&sc.gear);
     sc.gear_dirty = false;
 }

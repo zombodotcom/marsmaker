@@ -1,8 +1,9 @@
-//! MarsScape models: procedural low-poly (flat-shaded) astronauts, void creatures, resource nodes, the
+//! MarsScape models: procedural low-poly (flat-shaded) void creatures, resource nodes, the
 //! fabricator, rifts, the click marker and projectiles. Every model is a root entity facing -Z
 //! with posable child parts (`Part`) that `animate` swings. All materials are plain opaque
 //! StandardMaterials (colour / emissive / roughness only), so they share the buggy's pipelines
-//! and don't add shader compiles in the browser.
+//! and don't add shader compiles in the browser. Astronauts (players and colonists) are the
+//! rigged glTF character in hero.rs; `astronaut` only spawns its root.
 
 use super::proto::anim;
 use crate::visuals::Fx;
@@ -55,7 +56,24 @@ pub struct Rig {
     /// seconds since death (creatures fall over, then sink)
     pub dead_t: f32,
     pub recoil: f32,
+    /// shots fired and hits taken so far (characters play a one-shot clip on each)
+    pub shots: u32,
+    pub hits: u32,
+    /// ground speed this tick (m/s) and whether a gun is out
+    pub speed: f32,
+    pub armed: bool,
 }
+
+impl Rig {
+    pub fn new(scale: f32) -> Self {
+        Rig { phase: 0.0, scale, anim: anim::IDLE, dead_t: 0.0, recoil: 0.0, shots: 0, hits: 0, speed: 0.0, armed: false }
+    }
+}
+
+/// Fixed click bounds in the root's local space, for models whose drawn bounds move around
+/// (skinned characters).
+#[derive(Component)]
+pub struct PickBox(pub Vec3, pub Vec3);
 
 #[derive(Component)]
 pub struct NodeFull;
@@ -71,7 +89,7 @@ pub struct Kit {
     mats: HashMap<String, Handle<StandardMaterial>>,
 }
 
-fn lowpoly(m: impl Into<Mesh>) -> Mesh {
+pub(super) fn lowpoly(m: impl Into<Mesh>) -> Mesh {
     let mut m: Mesh = m.into();
     m.duplicate_vertices();
     m.compute_flat_normals();
@@ -81,6 +99,22 @@ fn lowpoly(m: impl Into<Mesh>) -> Mesh {
 impl Kit {
     pub fn mesh(&mut self, meshes: &mut Assets<Mesh>, key: &'static str, f: impl FnOnce() -> Mesh) -> Handle<Mesh> {
         self.meshes.entry(key).or_insert_with(|| meshes.add(f())).clone()
+    }
+    /// A material with its own emissive colour (glass that glows faintly, say).
+    pub fn mat_lit(&mut self, mats: &mut Assets<StandardMaterial>, rgb: [f32; 3], emit: [f32; 3], rough: f32, metal: f32) -> Handle<StandardMaterial> {
+        let key = format!("{:.3},{:.3},{:.3}+{:.3},{:.3},{:.3},{rough:.2},{metal:.2}", rgb[0], rgb[1], rgb[2], emit[0], emit[1], emit[2]);
+        self.mats
+            .entry(key)
+            .or_insert_with(|| {
+                mats.add(StandardMaterial {
+                    base_color: Color::srgb(rgb[0], rgb[1], rgb[2]),
+                    emissive: Color::srgb(emit[0], emit[1], emit[2]).to_linear(),
+                    perceptual_roughness: rough,
+                    metallic: metal,
+                    ..default()
+                })
+            })
+            .clone()
     }
     pub fn mat(&mut self, mats: &mut Assets<StandardMaterial>, rgb: [f32; 3], glow: f32, rough: f32, metal: f32) -> Handle<StandardMaterial> {
         let key = format!("{:.3},{:.3},{:.3},{glow:.2},{rough:.2},{metal:.2}", rgb[0], rgb[1], rgb[2]);
@@ -108,16 +142,16 @@ pub struct Ctx<'a, 'w, 's> {
 }
 
 impl Ctx<'_, '_, '_> {
-    fn m(&mut self, key: &'static str, f: impl FnOnce() -> Mesh) -> Handle<Mesh> {
+    pub(super) fn m(&mut self, key: &'static str, f: impl FnOnce() -> Mesh) -> Handle<Mesh> {
         self.kit.mesh(self.meshes, key, f)
     }
-    fn c(&mut self, rgb: [f32; 3]) -> Handle<StandardMaterial> {
+    pub(super) fn c(&mut self, rgb: [f32; 3]) -> Handle<StandardMaterial> {
         self.kit.mat(self.mats, rgb, 0.0, 0.85, 0.0)
     }
-    fn glow(&mut self, rgb: [f32; 3], g: f32) -> Handle<StandardMaterial> {
+    pub(super) fn glow(&mut self, rgb: [f32; 3], g: f32) -> Handle<StandardMaterial> {
         self.kit.mat(self.mats, rgb, g, 0.6, 0.0)
     }
-    fn shiny(&mut self, rgb: [f32; 3]) -> Handle<StandardMaterial> {
+    pub(super) fn shiny(&mut self, rgb: [f32; 3]) -> Handle<StandardMaterial> {
         self.kit.mat(self.mats, rgb, 0.0, 0.25, 0.6)
     }
 }
@@ -149,65 +183,17 @@ pub fn suit_color(name: &str) -> [f32; 3] {
     SUITS[(h % 8) as usize]
 }
 
-pub fn gun_color(weapon: Option<&str>) -> [f32; 3] {
-    match weapon {
-        Some("rifle") => [0.38, 0.32, 0.24],
-        Some("plasma_gun") => [0.25, 0.85, 0.75],
-        _ => [0.22, 0.22, 0.25],
-    }
-}
-
-/// An astronaut, 1.8 m tall.
-pub fn astronaut(cx: &mut Ctx, name: &str, at: Vec3) -> Entity {
-    let suit = cx.c(suit_color(name));
-    let white = cx.c([0.97, 0.97, 0.96]);
-    let grey = cx.c([0.35, 0.35, 0.38]);
-    let dark = cx.c([0.16, 0.15, 0.15]);
-    let visor = cx.shiny([0.75, 0.55, 0.20]);
-    let leg = cx.m("a_leg", || lowpoly(Cuboid::new(0.22, 0.82, 0.25)).translated_by(Vec3::new(0.0, -0.41, 0.0)));
-    let boot = cx.m("a_boot", || lowpoly(Cuboid::new(0.26, 0.16, 0.34)).translated_by(Vec3::new(0.0, -0.8, -0.04)));
-    let arm = cx.m("a_arm", || lowpoly(Cuboid::new(0.17, 0.62, 0.19)).translated_by(Vec3::new(0.0, -0.29, 0.0)));
-    let glove = cx.m("a_glove", || lowpoly(Cuboid::new(0.19, 0.14, 0.2)).translated_by(Vec3::new(0.0, -0.64, 0.0)));
-    let torso = cx.m("a_torso", || lowpoly(Cuboid::new(0.52, 0.64, 0.34)));
-    let pack = cx.m("a_pack", || lowpoly(Cuboid::new(0.44, 0.54, 0.22)));
-    let helmet = cx.m("a_helmet", || lowpoly(Sphere::new(0.25).mesh().ico(1).unwrap()));
-    let face = cx.m("a_visor", || lowpoly(Sphere::new(0.2).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 0.82, 0.62)));
-    let collar = cx.m("a_collar", || lowpoly(Cylinder::new(0.2, 0.09)));
-    let aerial = cx.m("a_aerial", || lowpoly(Cuboid::new(0.03, 0.42, 0.03)));
-    let pick = cx.m("a_pick", || lowpoly(Cuboid::new(0.06, 0.06, 0.55)).translated_by(Vec3::new(0.0, -0.66, -0.22)));
-    let pick_head = cx.m("a_pickhead", || lowpoly(Cuboid::new(0.36, 0.08, 0.08)).translated_by(Vec3::new(0.0, -0.66, -0.5)));
-    let gun = cx.m("a_gun", || lowpoly(Cuboid::new(0.09, 0.12, 0.5)).translated_by(Vec3::new(0.0, -0.64, -0.2)));
-    let metal = cx.shiny([0.6, 0.6, 0.62]);
-    let gunmat = cx.c(gun_color(None));
+/// An astronaut, about 2 m tall: the root only. hero.rs puts the animated model under it, in
+/// the outfit of `name` (players) or `role` (colonists).
+pub fn astronaut(cx: &mut Ctx, name: &str, role: Option<&str>, at: Vec3) -> Entity {
     cx.commands
-        .spawn((Transform::from_translation(at), Visibility::default(), Rig { phase: 0.0, scale: 1.0, anim: anim::IDLE, dead_t: 0.0, recoil: 0.0 }))
-        .with_children(|p| {
-            piece(p, torso, suit.clone(), Transform::from_xyz(0.0, 1.18, 0.0));
-            piece(p, pack, white.clone(), Transform::from_xyz(0.0, 1.22, 0.27));
-            piece(p, collar, grey.clone(), Transform::from_xyz(0.0, 1.52, 0.0));
-            piece(p, helmet, white.clone(), Transform::from_xyz(0.0, 1.71, 0.0));
-            piece(p, face, visor, Transform::from_xyz(0.0, 1.70, -0.17));
-            piece(p, aerial, grey.clone(), Transform::from_xyz(0.14, 1.66, 0.33));
-            for (l, x) in [(Limb::LegL, -0.13), (Limb::LegR, 0.13)] {
-                let e = limb(p, l, leg.clone(), suit.clone(), Vec3::new(x, 0.86, 0.0));
-                p.commands().entity(e).with_children(|c| {
-                    piece(c, boot.clone(), dark.clone(), Transform::IDENTITY);
-                });
-            }
-            for (l, x) in [(Limb::ArmL, -0.35), (Limb::ArmR, 0.35)] {
-                let e = limb(p, l, arm.clone(), suit.clone(), Vec3::new(x, 1.46, 0.0));
-                p.commands().entity(e).with_children(|c| {
-                    piece(c, glove.clone(), white.clone(), Transform::IDENTITY);
-                    if l == Limb::ArmR {
-                        c.spawn((Transform::IDENTITY, Visibility::Hidden, Part { limb: Limb::Tool, rest: Quat::IDENTITY, k: 0.0 })).with_children(|t| {
-                            piece(t, pick.clone(), dark.clone(), Transform::IDENTITY);
-                            piece(t, pick_head.clone(), metal.clone(), Transform::IDENTITY);
-                        });
-                        c.spawn((Mesh3d(gun.clone()), MeshMaterial3d(gunmat.clone()), Transform::IDENTITY, Visibility::Hidden, Part { limb: Limb::Gun, rest: Quat::IDENTITY, k: 0.0 }));
-                    }
-                });
-            }
-        })
+        .spawn((
+            Transform::from_translation(at),
+            Visibility::default(),
+            Rig::new(1.0),
+            PickBox(Vec3::new(-0.4, 0.0, -0.34), Vec3::new(0.4, 2.05, 0.34)),
+            super::hero::Hero::new(super::hero::outfit(name, role)),
+        ))
         .id()
 }
 
@@ -260,7 +246,7 @@ pub fn enemy_look(kind: &str) -> &'static EnemyLook {
 /// A creature model from its `EnemyLook` row.
 pub fn creature(cx: &mut Ctx, kind: &str, at: Vec3) -> Entity {
     let lk = enemy_look(kind);
-    let root = cx.commands.spawn((Transform::from_translation(at), Visibility::default(), Rig { phase: 0.0, scale: lk.scale, anim: anim::IDLE, dead_t: 0.0, recoil: 0.0 })).id();
+    let root = cx.commands.spawn((Transform::from_translation(at), Visibility::default(), Rig::new(lk.scale))).id();
     let skin = cx.c(lk.skin);
     let dark = cx.c(lk.dark);
     let glow = cx.glow(lk.glow, 5.0);
@@ -749,80 +735,9 @@ pub fn cave(cx: &mut Ctx, map: &super::cave::CaveMap) -> Entity {
         .id()
 }
 
-/// Armour worn on an astronaut (respawned when the gear changes).
+/// Armour hung on an astronaut (respawned when the gear changes, hero.rs).
 #[derive(Component)]
 pub struct ArmourPiece;
-
-/// Put `gear` on the astronaut `root` (its left arm `arm_l` carries the shield).
-pub fn dress(cx: &mut Ctx, root: Entity, arm_l: Option<Entity>, gear: &super::proto::Gear) {
-    let tier = |item: &str| -> ([f32; 3], f32) {
-        if item.starts_with("chitin") {
-            ([0.40, 0.58, 0.48], 0.0)
-        } else if item.starts_with("iron") {
-            ([0.56, 0.58, 0.63], 0.0)
-        } else {
-            ([0.92, 0.70, 0.26], 1.0)
-        }
-    };
-    let mut parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)> = Vec::new();
-    if let Some(h) = &gear.helmet {
-        let (c, relic) = tier(h);
-        let mat = if relic > 0.0 { cx.kit.mat(cx.mats, c, 0.0, 0.3, 0.7) } else { cx.shiny(c) };
-        let shell = cx.m("ar_helm", || lowpoly(Sphere::new(0.27).mesh().ico(1).unwrap()).scaled_by(Vec3::new(1.0, 0.75, 1.0)));
-        let crest = cx.m("ar_crest", || lowpoly(Cuboid::new(0.06, 0.12, 0.42)));
-        parts.push((shell, mat.clone(), Transform::from_xyz(0.0, 1.8, 0.02)));
-        parts.push((crest, mat, Transform::from_xyz(0.0, 1.98, 0.02)));
-        if relic > 0.0 {
-            let band = cx.m("ar_band", || lowpoly(Torus::new(0.25, 0.28).mesh().minor_resolution(4).major_resolution(12)));
-            let glow = cx.glow([1.0, 0.8, 0.35], 5.0);
-            parts.push((band, glow, Transform::from_xyz(0.0, 1.74, 0.0)));
-        }
-    }
-    if let Some(s) = &gear.suit {
-        let (c, relic) = tier(s);
-        let mat = if relic > 0.0 { cx.kit.mat(cx.mats, c, 0.0, 0.3, 0.7) } else { cx.shiny(c) };
-        let plate = cx.m("ar_plate", || lowpoly(Cuboid::new(0.56, 0.46, 0.4)));
-        let pad = cx.m("ar_pad", || lowpoly(Sphere::new(0.15).mesh().ico(0).unwrap()).scaled_by(Vec3::new(1.2, 0.7, 1.0)));
-        let belt = cx.m("ar_belt", || lowpoly(Cuboid::new(0.55, 0.08, 0.38)));
-        parts.push((plate, mat.clone(), Transform::from_xyz(0.0, 1.24, -0.01)));
-        parts.push((pad.clone(), mat.clone(), Transform::from_xyz(-0.36, 1.5, 0.0)));
-        parts.push((pad, mat.clone(), Transform::from_xyz(0.36, 1.5, 0.0)));
-        parts.push((belt, mat, Transform::from_xyz(0.0, 0.9, 0.0)));
-        if relic > 0.0 {
-            let glyph = cx.m("ar_glyph", || lowpoly(Cuboid::new(0.05, 0.3, 0.02)));
-            let glow = cx.glow([1.0, 0.8, 0.35], 5.0);
-            for x in [-0.12f32, 0.0, 0.12] {
-                parts.push((glyph.clone(), glow.clone(), Transform::from_xyz(x, 1.25, -0.215)));
-            }
-        }
-    }
-    if gear.cape.is_some() {
-        let cape = cx.m("ar_cape", || lowpoly(Cuboid::new(0.6, 1.05, 0.03)));
-        let star = cx.m("ar_star", || lowpoly(Cuboid::new(0.04, 0.04, 0.01)));
-        let cloth = cx.c([0.28, 0.10, 0.45]);
-        let glow = cx.glow([0.8, 0.7, 1.0], 6.0);
-        parts.push((cape, cloth, Transform::from_xyz(0.0, 1.0, 0.42).with_rotation(Quat::from_rotation_x(-0.12))));
-        for i in 0..6 {
-            let (x, y) = (((i * 37) % 5) as f32 * 0.1 - 0.2, 0.6 + ((i * 53) % 7) as f32 * 0.12);
-            parts.push((star.clone(), glow.clone(), Transform::from_xyz(x, y, 0.445).with_rotation(Quat::from_rotation_x(-0.12))));
-        }
-    }
-    cx.commands.entity(root).with_children(|p| {
-        for (m, mat, t) in parts {
-            p.spawn((Mesh3d(m), MeshMaterial3d(mat), t, ArmourPiece));
-        }
-    });
-    if let (Some(_), Some(arm)) = (&gear.shield, arm_l) {
-        let disc = cx.m("ar_shield", || lowpoly(Cylinder::new(0.3, 0.05).mesh().resolution(6)).rotated_by(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)));
-        let rim = cx.m("ar_srim", || lowpoly(Torus::new(0.27, 0.32).mesh().minor_resolution(4).major_resolution(6)).rotated_by(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)));
-        let core = cx.glow([0.35, 0.85, 1.0], 4.0);
-        let frame = cx.shiny([0.5, 0.52, 0.58]);
-        cx.commands.entity(arm).with_children(|p| {
-            p.spawn((Mesh3d(disc), MeshMaterial3d(core), Transform::from_xyz(-0.13, -0.4, 0.0), ArmourPiece));
-            p.spawn((Mesh3d(rim), MeshMaterial3d(frame), Transform::from_xyz(-0.14, -0.4, 0.0), ArmourPiece));
-        });
-    }
-}
 
 /// The yellow (walk) / red (action) click cross.
 #[derive(Component)]

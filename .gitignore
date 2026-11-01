@@ -11,6 +11,8 @@ sites/
 # hirise2engine.py single-site output
 out/
 *.glb
+# ...except the game's own models (MarsScape character, see viewer/assets/CREDITS.md)
+!viewer/assets/*.glb
 
 # MarsScape server
 server/node_modules/
