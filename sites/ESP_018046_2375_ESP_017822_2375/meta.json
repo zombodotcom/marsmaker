@@ -1,0 +1,341 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_018046_2375_ESP_017822_2375",
+ "id": "DTEED_018046_2375_017822_2375_A01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Well-preserved 10-kilometer diameter impact crater. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_018046_2375_ESP_017822_2375/DTEED_018046_2375_017822_2375_A01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_018046_2375_ESP_017822_2375/ESP_017822_2375_RED_D_01_ORTHO.tif",
+ "source_crs": "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 2.141044925347708,
+ "converter_version": 2,
+ "created": "2026-10-16T00:05:28Z",
+ "center_lat": 57.38095,
+ "center_lon_east": -134.2785,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=57.38095 +lon_0=-134.2785 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 6.0,
+ "tile_px": 673,
+ "tile_overlap_px": 1,
+ "tile_size_m": 4032.0,
+ "grid_tiles": [
+  3,
+  10
+ ],
+ "grid_px": [
+  2017,
+  6721
+ ],
+ "grid_top_left_m": {
+  "east": -6048.0,
+  "north": 20160.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -3680.902099609375,
+ "height_max_m": -2848.55224609375,
+ "height_range_m": 832.349853515625,
+ "valid_fraction": 0.5185,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   48.0,
+   222.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    12.7,
+    3.1
+   ],
+   "score_zero": 0.2714,
+   "score_estimate": 0.2043
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.377,
+   "top_left_m": {
+    "east": -6048.0,
+    "north": 20160.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.4126,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 20160.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.5978,
+   "top_left_m": {
+    "east": -6048.0,
+    "north": 16128.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 0.8032,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 16128.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.477,
+   "top_left_m": {
+    "east": -6048.0,
+    "north": 12096.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 0.959,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 12096.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "height": "h_2_2.png",
+   "texture": "t_2_2.png",
+   "valid_fraction": 0.0076,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": 12096.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.3558,
+   "top_left_m": {
+    "east": -6048.0,
+    "north": 8064.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 8064.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "height": "h_3_2.png",
+   "texture": "t_3_2.png",
+   "valid_fraction": 0.1287,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": 8064.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.2341,
+   "top_left_m": {
+    "east": -6048.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "height": "h_4_2.png",
+   "texture": "t_4_2.png",
+   "valid_fraction": 0.243,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": 4032.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 5,
+   "height": "h_5_0.png",
+   "texture": "t_5_0.png",
+   "valid_fraction": 0.1119,
+   "top_left_m": {
+    "east": -6048.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "height": "h_5_1.png",
+   "texture": "t_5_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "height": "h_5_2.png",
+   "texture": "t_5_2.png",
+   "valid_fraction": 0.3385,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": 0.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 6,
+   "height": "h_6_0.png",
+   "texture": "t_6_0.png",
+   "valid_fraction": 0.0105,
+   "top_left_m": {
+    "east": -6048.0,
+    "north": -4032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "height": "h_6_1.png",
+   "texture": "t_6_1.png",
+   "valid_fraction": 0.9779,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -4032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "height": "h_6_2.png",
+   "texture": "t_6_2.png",
+   "valid_fraction": 0.4333,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": -4032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 7,
+   "height": "h_7_1.png",
+   "texture": "t_7_1.png",
+   "valid_fraction": 0.8648,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -8064.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 7,
+   "height": "h_7_2.png",
+   "texture": "t_7_2.png",
+   "valid_fraction": 0.5292,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": -8064.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 8,
+   "height": "h_8_1.png",
+   "texture": "t_8_1.png",
+   "valid_fraction": 0.7253,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -12096.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 8,
+   "height": "h_8_2.png",
+   "texture": "t_8_2.png",
+   "valid_fraction": 0.6249,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": -12096.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 9,
+   "height": "h_9_1.png",
+   "texture": "t_9_1.png",
+   "valid_fraction": 0.3648,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -16128.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 9,
+   "height": "h_9_2.png",
+   "texture": "t_9_2.png",
+   "valid_fraction": 0.3847,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": -16128.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 3,
+  "source_metres_per_pixel": 2.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}

@@ -1,0 +1,176 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_016686_1735_ESP_017108_1735",
+ "id": "DTEED_016686_1735_017108_1735_H01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Chaos on the floor of Candor Chasma. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_016686_1735_ESP_017108_1735/DTEED_016686_1735_017108_1735_H01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_016686_1735_ESP_017108_1735/ESP_016686_1735_RED_C_01_ORTHO.tif",
+ "source_crs": "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 2.0242842183916308,
+ "converter_version": 2,
+ "created": "2026-10-15T23:57:30Z",
+ "center_lat": -6.49275,
+ "center_lon_east": -72.5436,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=-6.49275 +lon_0=-72.5436 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 4.0,
+ "tile_px": 1009,
+ "tile_overlap_px": 1,
+ "tile_size_m": 4032.0,
+ "grid_tiles": [
+  2,
+  5
+ ],
+ "grid_px": [
+  2017,
+  5041
+ ],
+ "grid_top_left_m": {
+  "east": -4016.0,
+  "north": 10096.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -4766.56982421875,
+ "height_max_m": -4280.8232421875,
+ "height_range_m": 485.74658203125,
+ "valid_fraction": 0.6089,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   21.0,
+   192.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    16.0,
+    -6.6
+   ],
+   "score_zero": 0.3337,
+   "score_estimate": 0.3057
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.7202,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 10096.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.3703,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 10096.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.7771,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 6064.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 0.5294,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 6064.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.657,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 2032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 0.6495,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 2032.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.5369,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -2000.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 0.7695,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -2000.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.3736,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -6032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 0.7041,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -6032.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 2,
+  "source_metres_per_pixel": 2.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}

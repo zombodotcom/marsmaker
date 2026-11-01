@@ -1,0 +1,352 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_040770_1755_ESP_039280_1755",
+ "id": "DTEEC_040770_1755_039280_1755_A01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Gale Crater dunes and Curiosity rover. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_040770_1755_ESP_039280_1755/DTEEC_040770_1755_039280_1755_A01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_040770_1755_ESP_039280_1755/PSP_003453_1750_RED_C_02_ORTHO.tif",
+ "source_crs": "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 1.011757165008657,
+ "converter_version": 2,
+ "created": "2026-10-16T00:10:26Z",
+ "center_lat": -4.6864,
+ "center_lon_east": 137.388,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=-4.6864 +lon_0=137.388 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 3.0,
+ "tile_px": 673,
+ "tile_overlap_px": 1,
+ "tile_size_m": 2016.0,
+ "grid_tiles": [
+  4,
+  7
+ ],
+ "grid_px": [
+  2689,
+  4705
+ ],
+ "grid_top_left_m": {
+  "east": -4032.0,
+  "north": 7048.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -4500.73095703125,
+ "height_max_m": -3493.104248046875,
+ "height_range_m": 1007.626708984375,
+ "valid_fraction": 0.5436,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   9.0,
+   199.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    3.1,
+    2.8
+   ],
+   "score_zero": 0.0817,
+   "score_estimate": 0.0668
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.1574,
+   "top_left_m": {
+    "east": -4032.0,
+    "north": 7048.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.3892,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 7048.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 0,
+   "height": "h_0_2.png",
+   "texture": "t_0_2.png",
+   "valid_fraction": 0.436,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 7048.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.4691,
+   "top_left_m": {
+    "east": -4032.0,
+    "north": 5032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 5032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 1,
+   "height": "h_1_2.png",
+   "texture": "t_1_2.png",
+   "valid_fraction": 0.9556,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 5032.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 1,
+   "height": "h_1_3.png",
+   "texture": "t_1_3.png",
+   "valid_fraction": 0.0011,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": 5032.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.3536,
+   "top_left_m": {
+    "east": -4032.0,
+    "north": 3016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 3016.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "height": "h_2_2.png",
+   "texture": "t_2_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 3016.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 2,
+   "height": "h_2_3.png",
+   "texture": "t_2_3.png",
+   "valid_fraction": 0.0739,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": 3016.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.2365,
+   "top_left_m": {
+    "east": -4032.0,
+    "north": 1000.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": 1000.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "height": "h_3_2.png",
+   "texture": "t_3_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 0.0,
+    "north": 1000.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 3,
+   "height": "h_3_3.png",
+   "texture": "t_3_3.png",
+   "valid_fraction": 0.1967,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": 1000.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.1107,
+   "top_left_m": {
+    "east": -4032.0,
+    "north": -1016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -1016.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "height": "h_4_2.png",
+   "texture": "t_4_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 0.0,
+    "north": -1016.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "height": "h_4_3.png",
+   "texture": "t_4_3.png",
+   "valid_fraction": 0.3219,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": -1016.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 5,
+   "height": "h_5_0.png",
+   "texture": "t_5_0.png",
+   "valid_fraction": 0.0092,
+   "top_left_m": {
+    "east": -4032.0,
+    "north": -3032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "height": "h_5_1.png",
+   "texture": "t_5_1.png",
+   "valid_fraction": 0.9742,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -3032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "height": "h_5_2.png",
+   "texture": "t_5_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 0.0,
+    "north": -3032.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "height": "h_5_3.png",
+   "texture": "t_5_3.png",
+   "valid_fraction": 0.4525,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": -3032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "height": "h_6_1.png",
+   "texture": "t_6_1.png",
+   "valid_fraction": 0.4487,
+   "top_left_m": {
+    "east": -2016.0,
+    "north": -5048.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "height": "h_6_2.png",
+   "texture": "t_6_2.png",
+   "valid_fraction": 0.393,
+   "top_left_m": {
+    "east": 0.0,
+    "north": -5048.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 6,
+   "height": "h_6_3.png",
+   "texture": "t_6_3.png",
+   "valid_fraction": 0.1558,
+   "top_left_m": {
+    "east": 2016.0,
+    "north": -5048.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 3,
+  "source_metres_per_pixel": 1.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}

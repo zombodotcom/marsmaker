@@ -1,0 +1,407 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_016750_1830_ESP_017172_1830",
+ "id": "DTEEC_016750_1830_017172_1830_A01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Aram Chaos. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_016750_1830_ESP_017172_1830/DTEEC_016750_1830_017172_1830_A01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_016750_1830_ESP_017172_1830/ESP_016750_1830_RED_C_01_ORTHO.tif",
+ "source_crs": "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 1.011834764359366,
+ "converter_version": 2,
+ "created": "2026-10-15T23:58:07Z",
+ "center_lat": 2.73455,
+ "center_lon_east": -20.25625,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=2.73455 +lon_0=-20.25625 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 3.0,
+ "tile_px": 673,
+ "tile_overlap_px": 1,
+ "tile_size_m": 2016.0,
+ "grid_tiles": [
+  4,
+  8
+ ],
+ "grid_px": [
+  2689,
+  5377
+ ],
+ "grid_top_left_m": {
+  "east": -4016.0,
+  "north": 8056.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -2942.317138671875,
+ "height_max_m": -2199.6123046875,
+ "height_range_m": 742.704833984375,
+ "valid_fraction": 0.6434,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   26.0,
+   192.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    7.3,
+    0.2
+   ],
+   "score_zero": 0.0993,
+   "score_estimate": 0.0812
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.5654,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 8056.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.7519,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 8056.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 0,
+   "height": "h_0_2.png",
+   "texture": "t_0_2.png",
+   "valid_fraction": 0.7265,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 8056.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 0,
+   "height": "h_0_3.png",
+   "texture": "t_0_3.png",
+   "valid_fraction": 0.0007,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 8056.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.646,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 6040.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 6040.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 1,
+   "height": "h_1_2.png",
+   "texture": "t_1_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 6040.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 1,
+   "height": "h_1_3.png",
+   "texture": "t_1_3.png",
+   "valid_fraction": 0.073,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 6040.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.5266,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 4024.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 4024.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "height": "h_2_2.png",
+   "texture": "t_2_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 4024.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 2,
+   "height": "h_2_3.png",
+   "texture": "t_2_3.png",
+   "valid_fraction": 0.1941,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 4024.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.4059,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 2008.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 2008.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "height": "h_3_2.png",
+   "texture": "t_3_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 2008.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 3,
+   "height": "h_3_3.png",
+   "texture": "t_3_3.png",
+   "valid_fraction": 0.3147,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 2008.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.2813,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -8.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -8.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "height": "h_4_2.png",
+   "texture": "t_4_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -8.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "height": "h_4_3.png",
+   "texture": "t_4_3.png",
+   "valid_fraction": 0.4344,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -8.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 5,
+   "height": "h_5_0.png",
+   "texture": "t_5_0.png",
+   "valid_fraction": 0.156,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -2024.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "height": "h_5_1.png",
+   "texture": "t_5_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -2024.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "height": "h_5_2.png",
+   "texture": "t_5_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -2024.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "height": "h_5_3.png",
+   "texture": "t_5_3.png",
+   "valid_fraction": 0.5574,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -2024.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 6,
+   "height": "h_6_0.png",
+   "texture": "t_6_0.png",
+   "valid_fraction": 0.0376,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -4040.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "height": "h_6_1.png",
+   "texture": "t_6_1.png",
+   "valid_fraction": 0.9958,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -4040.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "height": "h_6_2.png",
+   "texture": "t_6_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -4040.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 6,
+   "height": "h_6_3.png",
+   "texture": "t_6_3.png",
+   "valid_fraction": 0.6813,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -4040.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 7,
+   "height": "h_7_1.png",
+   "texture": "t_7_1.png",
+   "valid_fraction": 0.6451,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -6056.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 7,
+   "height": "h_7_2.png",
+   "texture": "t_7_2.png",
+   "valid_fraction": 0.586,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -6056.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 7,
+   "height": "h_7_3.png",
+   "texture": "t_7_3.png",
+   "valid_fraction": 0.3668,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -6056.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 3,
+  "source_metres_per_pixel": 1.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}

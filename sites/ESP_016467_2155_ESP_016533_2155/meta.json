@@ -1,0 +1,418 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/ESP_016467_2155_ESP_016533_2155",
+ "id": "DTEEC_016467_2155_016533_2155_A01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Collapse features on Hrad Vallis mudflow. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_016467_2155_ESP_016533_2155/DTEEC_016467_2155_016533_2155_A01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/ESP_016467_2155_ESP_016533_2155/ESP_016467_2155_RED_C_01_ORTHO.tif",
+ "source_crs": "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 1.0540353548887433,
+ "converter_version": 2,
+ "created": "2026-10-16T00:02:12Z",
+ "center_lat": 35.1349,
+ "center_lon_east": 141.734,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=35.1349 +lon_0=141.734 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 3.0,
+ "tile_px": 673,
+ "tile_overlap_px": 1,
+ "tile_size_m": 2016.0,
+ "grid_tiles": [
+  4,
+  8
+ ],
+ "grid_px": [
+  2689,
+  5377
+ ],
+ "grid_top_left_m": {
+  "east": -4016.0,
+  "north": 8048.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": -4082.21728515625,
+ "height_max_m": -3958.71630859375,
+ "height_range_m": 123.5009765625,
+ "valid_fraction": 0.6627,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata, 1..255 linear stretch of ortho DN",
+  "stretch_dn": [
+   66.0,
+   221.0
+  ],
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    6.3,
+    2.2
+   ],
+   "score_zero": 0.5979,
+   "score_estimate": 0.4392
+  }
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.3674,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 8048.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.5531,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 8048.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 0,
+   "height": "h_0_2.png",
+   "texture": "t_0_2.png",
+   "valid_fraction": 0.6912,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 8048.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 0,
+   "height": "h_0_3.png",
+   "texture": "t_0_3.png",
+   "valid_fraction": 0.0759,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 8048.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.7848,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 6032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 6032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 1,
+   "height": "h_1_2.png",
+   "texture": "t_1_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 6032.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 1,
+   "height": "h_1_3.png",
+   "texture": "t_1_3.png",
+   "valid_fraction": 0.2032,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 6032.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.6667,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 4016.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 4016.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "height": "h_2_2.png",
+   "texture": "t_2_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 4016.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 2,
+   "height": "h_2_3.png",
+   "texture": "t_2_3.png",
+   "valid_fraction": 0.3209,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 4016.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.5486,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": 2000.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": 2000.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "height": "h_3_2.png",
+   "texture": "t_3_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": 2000.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 3,
+   "height": "h_3_3.png",
+   "texture": "t_3_3.png",
+   "valid_fraction": 0.4387,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": 2000.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.4305,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -16.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -16.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "height": "h_4_2.png",
+   "texture": "t_4_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -16.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "height": "h_4_3.png",
+   "texture": "t_4_3.png",
+   "valid_fraction": 0.5566,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -16.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 5,
+   "height": "h_5_0.png",
+   "texture": "t_5_0.png",
+   "valid_fraction": 0.3122,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -2032.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "height": "h_5_1.png",
+   "texture": "t_5_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -2032.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "height": "h_5_2.png",
+   "texture": "t_5_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -2032.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "height": "h_5_3.png",
+   "texture": "t_5_3.png",
+   "valid_fraction": 0.6747,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -2032.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 6,
+   "height": "h_6_0.png",
+   "texture": "t_6_0.png",
+   "valid_fraction": 0.1938,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -4048.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "height": "h_6_1.png",
+   "texture": "t_6_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -4048.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "height": "h_6_2.png",
+   "texture": "t_6_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -4048.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 6,
+   "height": "h_6_3.png",
+   "texture": "t_6_3.png",
+   "valid_fraction": 0.7928,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -4048.0
+   }
+  },
+  {
+   "x": 0,
+   "y": 7,
+   "height": "h_7_0.png",
+   "texture": "t_7_0.png",
+   "valid_fraction": 0.0679,
+   "top_left_m": {
+    "east": -4016.0,
+    "north": -6064.0
+   }
+  },
+  {
+   "x": 1,
+   "y": 7,
+   "height": "h_7_1.png",
+   "texture": "t_7_1.png",
+   "valid_fraction": 0.6778,
+   "top_left_m": {
+    "east": -2000.0,
+    "north": -6064.0
+   }
+  },
+  {
+   "x": 2,
+   "y": 7,
+   "height": "h_7_2.png",
+   "texture": "t_7_2.png",
+   "valid_fraction": 0.5237,
+   "top_left_m": {
+    "east": 16.0,
+    "north": -6064.0
+   }
+  },
+  {
+   "x": 3,
+   "y": 7,
+   "height": "h_7_3.png",
+   "texture": "t_7_3.png",
+   "valid_fraction": 0.3257,
+   "top_left_m": {
+    "east": 2032.0,
+    "north": -6064.0
+   }
+  }
+ ],
+ "web_pack": {
+  "factor": 3,
+  "source_metres_per_pixel": 1.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 3x3 on linear codes"
+ }
+}

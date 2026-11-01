@@ -1,0 +1,655 @@
+{
+ "source": "mars/mro/hirise/controlled/dtm/PSP_003800_1325_PSP_004077_1325",
+ "id": "DTEEC_003800_1325_004077_1325_U01",
+ "description": "This product is a Mars Reconnaissance Orbiter (MRO) High Resolution Imaging Experiment (HiRISE) Digital Terrain Model (DTM). This product was created and edited using BAE Systems Set or BAE Systems GXP. This product's rationale for creation was: Proctor Crater dune field. This DTM was created by University Of Arizona.",
+ "license": "CC0-1.0 (NASA/JPL/University of Arizona/USGS)",
+ "source_dtm": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/PSP_003800_1325_PSP_004077_1325/DTEEC_003800_1325_004077_1325_U01.tif",
+ "source_ortho": "https://astrogeo-ard.s3-us-west-2.amazonaws.com/mars/mro/hirise/controlled/dtm/PSP_003800_1325_PSP_004077_1325/PSP_004077_1325_RED_C_01_ORTHO.tif",
+ "source_crs": "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "source_res_m": 1.0645835811930255,
+ "converter_version": 3,
+ "created": "2026-10-19T19:37:12Z",
+ "center_lat": -47.04115,
+ "center_lon_east": 30.6694,
+ "mars_radius_m": 3396190.0,
+ "projection": "+proj=tmerc +lat_0=-47.04115 +lon_0=30.6694 +k=1 +x_0=0 +y_0=0 +R=3396190 +units=m +no_defs=True",
+ "metres_per_pixel": 4.0,
+ "tile_px": 505,
+ "tile_overlap_px": 1,
+ "tile_size_m": 2016.0,
+ "grid_tiles": [
+  4,
+  11
+ ],
+ "grid_px": [
+  2017,
+  5545
+ ],
+ "grid_top_left_m": {
+  "east": -4040.0,
+  "north": 11096.0
+ },
+ "tile_naming": "h_{row}_{col}.png (height) / t_{row}_{col}.png (texture) / optional a_{row}_{col}.png (approximate albedo, see 'albedo'), row 0 = north; tile (col,row) top-left vertex = grid_top_left + (col*tile_size_m, -row*tile_size_m); tiles with no data are not written",
+ "height_encoding": "uint16, 0 = nodata, v in 1..65535 -> height_min_m + (v-1)*height_range_m/65534",
+ "height_min_m": 496.8284606933594,
+ "height_max_m": 765.1241455078125,
+ "height_range_m": 268.2956848144531,
+ "valid_fraction": 0.6611,
+ "texture": {
+  "encoding": "uint8 greyscale, 0 = nodata; v = 1 + round(254 * clip((dn - dn_lo) / (dn_hi - dn_lo), 0, 1) ** gamma), with +-dither_dn DN of deterministic noise added to dn first",
+  "inverse": "dn = dn_lo + (dn_hi - dn_lo) * ((v - 1) / 254) ** (1 / gamma); I/F = dn * iof_scaling_factor + iof_offset (ortho_label)",
+  "mapping": {
+   "dn_lo": 4.0,
+   "dn_hi": 239.0,
+   "gamma": 0.75,
+   "dither_dn": 0.0,
+   "levels_per_dn": 1.081,
+   "window_widened_to_cap_gain": false,
+   "source_bits_detected": 10,
+   "source_dn_median": 58.0,
+   "source_distinct_dn_in_sample": 260,
+   "percentiles": [
+    0.05,
+    99.95
+   ],
+   "max_gain": 4.0
+  },
+  "stretch_dn": [
+   4.0,
+   239.0
+  ],
+  "ortho_label": {
+   "sample_bits": 8.0,
+   "iof_scaling_factor": 0.0002880315862876,
+   "iof_offset": 0.0772543606968634,
+   "projection": "EQUIRECTANGULAR",
+   "radius_km": 3386.15,
+   "center_latitude": -45.0,
+   "center_longitude": 30.67
+  },
+  "ortho_shift_applied_m": [
+   0.0,
+   0.0
+  ],
+  "ortho_northing_scale_applied": 1.002965019269672,
+  "alignment_check": {
+   "ortho_offset_estimate_m": [
+    1966.8,
+    -18532.6
+   ],
+   "score_zero": 0.0228,
+   "score_estimate": 0.0234,
+   "northing_scale_candidate": 1.002965,
+   "score_northing_scale": 0.0509,
+   "edge_mismatch_m": {
+    "as_is": 16483.1,
+    "scaled": 3.0
+   },
+   "score_northing_scale_final": 0.0509
+  }
+ },
+ "sun": {
+  "azimuth_deg": 279.528,
+  "elevation_deg": 42.704,
+  "azimuth_convention": "degrees clockwise from north (direction towards the sun)",
+  "incidence_deg": 47.295559,
+  "emission_deg": 27.724487,
+  "phase_deg": 22.66905,
+  "sub_solar_azimuth_deg": 189.527562,
+  "north_azimuth_deg": 270.0,
+  "solar_longitude_deg": 254.613015,
+  "start_time": "2007-06-10T02:57:23.879",
+  "observation": "PSP_004077_1325",
+  "source": "https://hirise-pds.lpl.arizona.edu/PDS/RDR/PSP/ORB_004000_004099/PSP_004077_1325/PSP_004077_1325_RED.LBL"
+ },
+ "warnings": [],
+ "tiles": [
+  {
+   "x": 0,
+   "y": 0,
+   "height": "h_0_0.png",
+   "texture": "t_0_0.png",
+   "valid_fraction": 0.2962,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": 11096.0
+   },
+   "albedo": "a_0_0.png"
+  },
+  {
+   "x": 1,
+   "y": 0,
+   "height": "h_0_1.png",
+   "texture": "t_0_1.png",
+   "valid_fraction": 0.4628,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": 11096.0
+   },
+   "albedo": "a_0_1.png"
+  },
+  {
+   "x": 2,
+   "y": 0,
+   "height": "h_0_2.png",
+   "texture": "t_0_2.png",
+   "valid_fraction": 0.3687,
+   "top_left_m": {
+    "east": -8.0,
+    "north": 11096.0
+   },
+   "albedo": "a_0_2.png"
+  },
+  {
+   "x": 0,
+   "y": 1,
+   "height": "h_1_0.png",
+   "texture": "t_1_0.png",
+   "valid_fraction": 0.7878,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": 9080.0
+   },
+   "albedo": "a_1_0.png"
+  },
+  {
+   "x": 1,
+   "y": 1,
+   "height": "h_1_1.png",
+   "texture": "t_1_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": 9080.0
+   },
+   "albedo": "a_1_1.png"
+  },
+  {
+   "x": 2,
+   "y": 1,
+   "height": "h_1_2.png",
+   "texture": "t_1_2.png",
+   "valid_fraction": 0.7525,
+   "top_left_m": {
+    "east": -8.0,
+    "north": 9080.0
+   },
+   "albedo": "a_1_2.png"
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "height": "h_2_0.png",
+   "texture": "t_2_0.png",
+   "valid_fraction": 0.6581,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": 7064.0
+   },
+   "albedo": "a_2_0.png"
+  },
+  {
+   "x": 1,
+   "y": 2,
+   "height": "h_2_1.png",
+   "texture": "t_2_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": 7064.0
+   },
+   "albedo": "a_2_1.png"
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "height": "h_2_2.png",
+   "texture": "t_2_2.png",
+   "valid_fraction": 0.8825,
+   "top_left_m": {
+    "east": -8.0,
+    "north": 7064.0
+   },
+   "albedo": "a_2_2.png"
+  },
+  {
+   "x": 0,
+   "y": 3,
+   "height": "h_3_0.png",
+   "texture": "t_3_0.png",
+   "valid_fraction": 0.5278,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": 5048.0
+   },
+   "albedo": "a_3_0.png"
+  },
+  {
+   "x": 1,
+   "y": 3,
+   "height": "h_3_1.png",
+   "texture": "t_3_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": 5048.0
+   },
+   "albedo": "a_3_1.png"
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "height": "h_3_2.png",
+   "texture": "t_3_2.png",
+   "valid_fraction": 0.9897,
+   "top_left_m": {
+    "east": -8.0,
+    "north": 5048.0
+   },
+   "albedo": "a_3_2.png"
+  },
+  {
+   "x": 3,
+   "y": 3,
+   "height": "h_3_3.png",
+   "texture": "t_3_3.png",
+   "valid_fraction": 0.0248,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": 5048.0
+   },
+   "albedo": "a_3_3.png"
+  },
+  {
+   "x": 0,
+   "y": 4,
+   "height": "h_4_0.png",
+   "texture": "t_4_0.png",
+   "valid_fraction": 0.398,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": 3032.0
+   },
+   "albedo": "a_4_0.png"
+  },
+  {
+   "x": 1,
+   "y": 4,
+   "height": "h_4_1.png",
+   "texture": "t_4_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": 3032.0
+   },
+   "albedo": "a_4_1.png"
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "height": "h_4_2.png",
+   "texture": "t_4_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -8.0,
+    "north": 3032.0
+   },
+   "albedo": "a_4_2.png"
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "height": "h_4_3.png",
+   "texture": "t_4_3.png",
+   "valid_fraction": 0.143,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": 3032.0
+   },
+   "albedo": "a_4_3.png"
+  },
+  {
+   "x": 0,
+   "y": 5,
+   "height": "h_5_0.png",
+   "texture": "t_5_0.png",
+   "valid_fraction": 0.2697,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": 1016.0
+   },
+   "albedo": "a_5_0.png"
+  },
+  {
+   "x": 1,
+   "y": 5,
+   "height": "h_5_1.png",
+   "texture": "t_5_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": 1016.0
+   },
+   "albedo": "a_5_1.png"
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "height": "h_5_2.png",
+   "texture": "t_5_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -8.0,
+    "north": 1016.0
+   },
+   "albedo": "a_5_2.png"
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "height": "h_5_3.png",
+   "texture": "t_5_3.png",
+   "valid_fraction": 0.272,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": 1016.0
+   },
+   "albedo": "a_5_3.png"
+  },
+  {
+   "x": 0,
+   "y": 6,
+   "height": "h_6_0.png",
+   "texture": "t_6_0.png",
+   "valid_fraction": 0.1396,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": -1000.0
+   },
+   "albedo": "a_6_0.png"
+  },
+  {
+   "x": 1,
+   "y": 6,
+   "height": "h_6_1.png",
+   "texture": "t_6_1.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": -1000.0
+   },
+   "albedo": "a_6_1.png"
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "height": "h_6_2.png",
+   "texture": "t_6_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -8.0,
+    "north": -1000.0
+   },
+   "albedo": "a_6_2.png"
+  },
+  {
+   "x": 3,
+   "y": 6,
+   "height": "h_6_3.png",
+   "texture": "t_6_3.png",
+   "valid_fraction": 0.4011,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": -1000.0
+   },
+   "albedo": "a_6_3.png"
+  },
+  {
+   "x": 0,
+   "y": 7,
+   "height": "h_7_0.png",
+   "texture": "t_7_0.png",
+   "valid_fraction": 0.0221,
+   "top_left_m": {
+    "east": -4040.0,
+    "north": -3016.0
+   },
+   "albedo": "a_7_0.png"
+  },
+  {
+   "x": 1,
+   "y": 7,
+   "height": "h_7_1.png",
+   "texture": "t_7_1.png",
+   "valid_fraction": 0.9885,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": -3016.0
+   },
+   "albedo": "a_7_1.png"
+  },
+  {
+   "x": 2,
+   "y": 7,
+   "height": "h_7_2.png",
+   "texture": "t_7_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -8.0,
+    "north": -3016.0
+   },
+   "albedo": "a_7_2.png"
+  },
+  {
+   "x": 3,
+   "y": 7,
+   "height": "h_7_3.png",
+   "texture": "t_7_3.png",
+   "valid_fraction": 0.531,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": -3016.0
+   },
+   "albedo": "a_7_3.png"
+  },
+  {
+   "x": 1,
+   "y": 8,
+   "height": "h_8_1.png",
+   "texture": "t_8_1.png",
+   "valid_fraction": 0.8806,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": -5032.0
+   },
+   "albedo": "a_8_1.png"
+  },
+  {
+   "x": 2,
+   "y": 8,
+   "height": "h_8_2.png",
+   "texture": "t_8_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -8.0,
+    "north": -5032.0
+   },
+   "albedo": "a_8_2.png"
+  },
+  {
+   "x": 3,
+   "y": 8,
+   "height": "h_8_3.png",
+   "texture": "t_8_3.png",
+   "valid_fraction": 0.6607,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": -5032.0
+   },
+   "albedo": "a_8_3.png"
+  },
+  {
+   "x": 1,
+   "y": 9,
+   "height": "h_9_1.png",
+   "texture": "t_9_1.png",
+   "valid_fraction": 0.7515,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": -7048.0
+   },
+   "albedo": "a_9_1.png"
+  },
+  {
+   "x": 2,
+   "y": 9,
+   "height": "h_9_2.png",
+   "texture": "t_9_2.png",
+   "valid_fraction": 1.0,
+   "top_left_m": {
+    "east": -8.0,
+    "north": -7048.0
+   },
+   "albedo": "a_9_2.png"
+  },
+  {
+   "x": 3,
+   "y": 9,
+   "height": "h_9_3.png",
+   "texture": "t_9_3.png",
+   "valid_fraction": 0.7888,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": -7048.0
+   },
+   "albedo": "a_9_3.png"
+  },
+  {
+   "x": 1,
+   "y": 10,
+   "height": "h_10_1.png",
+   "texture": "t_10_1.png",
+   "valid_fraction": 0.3688,
+   "top_left_m": {
+    "east": -2024.0,
+    "north": -9064.0
+   },
+   "albedo": "a_10_1.png"
+  },
+  {
+   "x": 2,
+   "y": 10,
+   "height": "h_10_2.png",
+   "texture": "t_10_2.png",
+   "valid_fraction": 0.4615,
+   "top_left_m": {
+    "east": -8.0,
+    "north": -9064.0
+   },
+   "albedo": "a_10_2.png"
+  },
+  {
+   "x": 3,
+   "y": 10,
+   "height": "h_10_3.png",
+   "texture": "t_10_3.png",
+   "valid_fraction": 0.2929,
+   "top_left_m": {
+    "east": 2008.0,
+    "north": -9064.0
+   },
+   "albedo": "a_10_3.png"
+  }
+ ],
+ "albedo": {
+  "approximate": true,
+  "note": "APPROXIMATE de-lit ortho: DTM-scale sun shading divided out; not a photometric albedo. Use a_ instead of t_ when the engine applies its own lighting. Same encoding/mapping as texture.",
+  "tiles": "a_{row}_{col}.png (uint8 grey, 0 = nodata, encoded with texture.mapping)",
+  "tool": "tools/delight.py v1",
+  "created": "2026-10-19T19:45:04Z",
+  "sun": {
+   "azimuth_deg": 279.528,
+   "elevation_deg": 42.704,
+   "azimuth_convention": "degrees clockwise from north (direction towards the sun)",
+   "incidence_deg": 47.295559,
+   "emission_deg": 27.724487,
+   "phase_deg": 22.66905,
+   "sub_solar_azimuth_deg": 189.527562,
+   "north_azimuth_deg": 270.0,
+   "solar_longitude_deg": 254.613015,
+   "start_time": "2007-06-10T02:57:23.879",
+   "observation": "PSP_004077_1325",
+   "source": "https://hirise-pds.lpl.arizona.edu/PDS/RDR/PSP/ORB_004000_004099/PSP_004077_1325/PSP_004077_1325_RED.LBL"
+  },
+  "method": "Lambert ratio R = cos(i_local)/cos(i_flat) from the DTM (Gaussian-smoothed sigma 3.0 px); I ~ a + b R fitted over the site; k = b/(a+b); S = 1 - w + w clip(R, r_min, r_max), w = blend k; A = I / max(S, s_min), in DN space",
+  "blend": 0.8,
+  "k_fit": 0.6641,
+  "k_used": 0.6641,
+  "w": 0.5313,
+  "fit": {
+   "a_dn": 30.8942,
+   "b_dn": 61.0736,
+   "corr": 0.132,
+   "n": 11326299
+  },
+  "corr_shading_vs_texture": 0.132,
+  "corr_shading_vs_albedo": 0.0876,
+  "clamp": {
+   "r_min": 0.25,
+   "r_max": 2.5,
+   "s_min": 0.35
+  },
+  "dtm_smoothing_px": 3.0,
+  "azimuth_check": {
+   "best_azimuth_deg": 210.0,
+   "corr_best": 0.1419,
+   "label_azimuth_deg": 279.528,
+   "corr_label_azimuth": 0.132,
+   "scan_step_deg": 15,
+   "scan_corr": [
+    0.057,
+    0.03,
+    0.012,
+    0.001,
+    -0.003,
+    -0.002,
+    0.003,
+    0.014,
+    0.032,
+    0.056,
+    0.086,
+    0.114,
+    0.132,
+    0.14,
+    0.142,
+    0.141,
+    0.14,
+    0.139,
+    0.139,
+    0.138,
+    0.137,
+    0.132,
+    0.118,
+    0.09
+   ]
+  },
+  "not_modelled": [
+   "cast shadows",
+   "sub-DTM-resolution shading",
+   "atmospheric scattering beyond a constant",
+   "non-Lambertian photometry",
+   "texture/DTM misregistration"
+  ],
+  "warnings": [
+   "photo shading correlates best with sun azimuth 210 deg, label says 280",
+   "weak photo/DTM shading correlation (0.13): texture may be misaligned or albedo-dominated; albedo correction is unreliable here"
+  ],
+  "tiles_written": 38
+ },
+ "web_pack": {
+  "factor": 4,
+  "source_metres_per_pixel": 1.0,
+  "source_tile_px": 2017,
+  "filter": "nodata-aware box 5x5 on linear codes"
+ }
+}
